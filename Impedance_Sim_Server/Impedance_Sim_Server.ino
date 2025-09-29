@@ -1,3 +1,8 @@
+/*
+  Server.ino
+  Simulates an RC circuit on the ESP32 and sends impedance data over BLE.
+  Calculates real/imaginary impedance for various frequencies to support Nyquist and Bode plotting.
+*/
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
