@@ -1,0 +1,328 @@
+<<<<<<< HEAD
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Impedance Visualizer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      overflow-x: hidden;
+    }
+
+    #top-left-logo {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    #top-left-logo img {
+      height: 50px;
+      opacity: 0.9;
+    }
+
+    #themeToggle {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 8px 12px;
+      background-color: #0077cc;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 1000;
+    }
+
+    h1 {
+      margin-top: 70px;
+      font-size: 1.8rem;
+      text-align: center;
+      width: 100%;
+    }
+
+    #bleConnectWrapper {
+      text-align: center;
+      margin: 10px 0;
+    }
+
+    #bleConnectButton, #toggleCollectButton {
+      padding: 10px 20px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      background-color: #0077cc;
+      color: white;
+      cursor: pointer;
+      margin: 0 5px;
+    }
+
+    #chartContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      padding: 10px 30px;
+    }
+
+    .chart-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    canvas {
+      width: 700px;
+      height: 450px;
+      border: 1px solid #aaa;
+      background-color: #fff;
+    }
+
+    #dataTableSection {
+      margin-top: 20px;
+      padding: 0 30px 40px;
+      max-width: 1000px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .table-scroll {
+      max-height: 26vh;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      margin: 0 auto;
+      width: 100%;
+      background-color: white;
+    }
+
+    #liveDataTable {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: auto;
+    }
+
+    #liveDataTable th, #liveDataTable td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    #liveDataTable thead th {
+      position: sticky;
+      top: 0;
+      background-color: #f5f5f5;
+      z-index: 2;
+      box-shadow: 0 2px 2px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="top-left-logo">
+    <img src="images/NBSS.png" alt="NBSS Logo">
+    <img src="images/UCF.png" alt="UCF Logo">
+  </div>
+
+  <button id="themeToggle">🌙</button>
+
+  <h1>Impedance Visualization</h1>
+
+  <div id="bleConnectWrapper">
+    <button id="bleConnectButton">🔗 Connect to BLE</button>
+    <button id="toggleCollectButton">⏸️ Pause Collection</button>
+  </div>
+
+  <div id="chartContainer">
+    <div class="chart-block">
+      <h3>Bode Plot</h3>
+      <canvas id="bodeChart"></canvas>
+    </div>
+    <div class="chart-block">
+      <h3>Nyquist Plot</h3>
+      <canvas id="nyquistChart"></canvas>
+    </div>
+  </div>
+
+  <div id="dataTableSection">
+    <h2 style="text-align:center;">Live Data Table</h2>
+    <div class="table-scroll">
+      <table id="liveDataTable">
+        <thead>
+          <tr>
+            <th>Timestamp (s)</th>
+            <th>Frequency (Hz)</th>
+            <th>Real (Ω)</th>
+            <th>Imag (Ω)</th>
+            <th>|Z| (Ω)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="realtime.js"></script>
+</body>
+</html>
+=======
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Impedance Visualizer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #top-left-logo {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    #top-left-logo img {
+      height: 50px;
+      opacity: 0.9;
+    }
+
+    .back-button {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 8px 16px;
+      background-color: #0077cc;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      font-weight: bold;
+      z-index: 1000;
+    }
+
+    .back-button:hover {
+      background-color: #005fa3;
+    }
+
+    #themeToggle {
+      position: fixed;
+      top: 60px;
+      right: 10px;
+      padding: 8px 12px;
+      background-color: #0077cc;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 1000;
+    }
+
+    #themeToggle:hover {
+      background-color: #005fa3;
+    }
+
+    .dark-mode {
+      background-color: #121212;
+      color: #e0e0e0;
+    }
+
+    .dark-mode canvas {
+      background-color: #1e1e1e;
+      border-color: #444;
+    }
+
+    .dark-mode .back-button,
+    .dark-mode #themeToggle {
+      background-color: #444;
+      color: white;
+    }
+
+    .dark-mode .back-button:hover,
+    .dark-mode #themeToggle:hover {
+      background-color: #666;
+    }
+
+    h1 {
+      margin-top: 70px;
+      font-size: 1.8rem;
+      text-align: center;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    #chartContainer {
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      height: calc(100vh - 140px);
+      padding: 10px 30px;
+      box-sizing: border-box;
+      gap: 20px;
+    }
+
+    canvas {
+      height: 100%;
+      width: 50%;
+      border: 1px solid #aaa;
+      background-color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="top-left-logo">
+    <img src="images/NBSS.png" alt="NBSS Logo">
+    <img src="images/UCF.png" alt="UCF Logo">
+  </div>
+
+  <a href="upload.html" class="back-button">← Edit Data</a>
+  <button id="themeToggle">🌙</button>
+
+  <h1>Impedance Visualization</h1>
+
+  <div id="chartContainer">
+    <canvas id="impedanceChart"></canvas>
+    <canvas id="timeChart"></canvas>
+  </div>
+
+  <script src="script.js"></script>
+  <script>
+    const themeToggle = document.getElementById('themeToggle');
+    if (localStorage.getItem('theme') === 'dark') {
+      document.body.classList.add('dark-mode');
+    }
+
+    themeToggle.addEventListener('click', () => {
+      document.body.classList.toggle('dark-mode');
+      const mode = document.body.classList.contains('dark-mode') ? 'dark' : 'light';
+      localStorage.setItem('theme', mode);
+    });
+  </script>
+</body>
+</html>
+>>>>>>> 8eb7c6186392f3b87cd947379768df2a0d79d57f

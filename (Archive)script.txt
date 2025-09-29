@@ -1,0 +1,82 @@
+document.addEventListener("DOMContentLoaded", () => {
+  const formatLabel = (val) => {
+    if (val == null) return '';
+    if (val >= 1e6) return (val / 1e6).toFixed(1) + 'M';
+    if (val >= 1e3) return (val / 1e3).toFixed(0) + 'k';
+    return val.toFixed(0);
+  };
+
+  window.impedanceChart = new Chart(document.getElementById("impedanceChart").getContext("2d"), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Real (Ω)', data: [], borderColor: 'blue', fill: false, tension: 0.3 },
+        { label: 'Imag (Ω)', data: [], borderColor: 'red', fill: false, tension: 0.3 }
+      ]
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        title: {
+          display: true,
+          text: 'Impedance vs Frequency'
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: 'Frequency (Hz)'
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'Impedance (Ω)'
+          },
+          beginAtZero: false
+        }
+      }
+    }
+  });
+
+  window.timeChart = new Chart(document.getElementById("timeChart").getContext("2d"), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Real (Ω)', data: [], borderColor: 'blue', fill: false, tension: 0.3 },
+        { label: 'Imag (Ω)', data: [], borderColor: 'red', fill: false, tension: 0.3 }
+      ]
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        title: {
+          display: true,
+          text: 'Impedance vs Time'
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: 'Time (ms)'
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'Impedance (Ω)'
+          },
+          beginAtZero: false
+        }
+      }
+    }
+  });
+});
