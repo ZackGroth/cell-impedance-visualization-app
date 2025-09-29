@@ -24,7 +24,7 @@ This web application connects to a Bluetooth-enabled ESP32 device that simulates
 
 ---
 
-## 🗂 File Overview
+## File Overview
 
 | File                | Description |
 |---------------------|-------------|
