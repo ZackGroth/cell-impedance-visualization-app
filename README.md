@@ -66,12 +66,6 @@ Upload `Server.ino` to an ESP32 board using the Arduino IDE. The sketch will:
 
 ---
 
-## 📷 Screenshots
-
-_(You can add screenshots here if you'd like to show off the plots!)_
-
----
-
 ##  Author
 
 **Zack Groth**  
