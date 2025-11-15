@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cell Impedance Visualizer (Mobile)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+  <header class="text-center py-3 bg-gray-800 text-xl font-bold shadow">
+    Cell Impedance Visualizer
+  </header>
+
+  <!-- Control buttons -->
+  <div class="flex justify-around p-3">
+    <button id="connectBtn" class="bg-blue-500 px-4 py-2 rounded-lg active:scale-95">Connect BLE</button>
+    <button id="startBtn" class="bg-green-500 px-4 py-2 rounded-lg active:scale-95">Start</button>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="flex justify-around border-b border-gray-700">
+    <button class="tab-btn flex-1 py-2 bg-gray-800" data-tab="bode">Bode</button>
+    <button class="tab-btn flex-1 py-2" data-tab="nyquist">Nyquist</button>
+    <button class="tab-btn flex-1 py-2" data-tab="humidity">Humidity</button>
+  </div>
+
+  <!-- Chart containers -->
+  <div id="chart-container" class="flex-1 overflow-y-auto p-2">
+    <canvas id="bodeChart"></canvas>
+    <canvas id="nyquistChart" class="hidden"></canvas>
+    <canvas id="humidityChart" class="hidden"></canvas>
+  </div>
+
+  <!-- Live Data Table -->
+  <div class="overflow-x-auto bg-gray-800 text-xs p-2">
+    <table id="dataTable" class="w-full text-left">
+      <thead>
+        <tr class="border-b border-gray-700">
+          <th>Time (s)</th><th>Freq (Hz)</th><th>|Z| (Ω)</th><th>Phase (°)</th><th>Humidity (%)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script src="realtime_mobile.js"></script>
+</body>
+</html>
