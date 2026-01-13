@@ -117,16 +117,12 @@ void setup() {
     return;
   }
 
-  // Prompt user to input start time manually
-  Serial.println("Enter current epoch time (seconds):");
-  while (Serial.available() == 0) {
-    delay(100);
-  }
-  startEpoch = Serial.readStringUntil('\n').toInt();
+  // TEMP: hard-code a start epoch so we don’t need Serial Monitor
+  startEpoch = 1760000000;  // any reasonable test value in seconds
   Serial.printf("Start epoch time set to: %lu\n", startEpoch);
 
   setupBLE();
-}
+}  // <--- this closing brace was missing
 
 void loop() {
   static unsigned long lastDataTime = 0;
@@ -153,3 +149,4 @@ void loop() {
 
   delay(100);
 }
+
