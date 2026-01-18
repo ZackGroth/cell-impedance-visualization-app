@@ -7,21 +7,27 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-  /* Stop the infinite scroll feel and give the chart region a real box */
-  #chart-container {
-    height: 52vh;          /* chart viewport height */
-    min-height: 320px;     /* ensures visible on small screens */
-    overflow: hidden;      /* prevents huge scroll caused by canvas sizing */
-  }
 
-  /* Make Chart.js canvases actually visible */
-  #chart-container canvas {
-    width: 100% !important;
-    height: 100% !important;
-    display: block;
-  }
-</style>
+  <style>
+    /* Stop the infinite scroll feel and give the chart region a real box */
+    #chart-container {
+      height: 52vh;          /* chart viewport height */
+      min-height: 320px;     /* ensures visible on small screens */
+      overflow: hidden;      /* prevents huge scroll caused by canvas sizing */
+    }
+
+    /* Make Chart.js canvases actually visible */
+    #chart-container canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+
+    /* IMPORTANT: allow Tailwind's .hidden to actually hide canvases */
+    #chart-container canvas.hidden {
+      display: none !important;
+    }
+  </style>
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen flex flex-col">
@@ -41,7 +47,7 @@
     </button>
   </div>
 
-  <!-- View mode selector (MATCHES JS: id="viewMode") -->
+  <!-- View mode selector -->
   <div class="px-3 pb-2">
     <label class="text-xs opacity-80">View Mode</label>
     <select id="viewMode"
@@ -72,7 +78,7 @@
     <canvas id="nyquistChart" class="hidden"></canvas>
     <canvas id="humidityChart" class="hidden"></canvas>
 
-    <!-- Mode 2 charts (MATCHES JS: timeChart + freqChart) -->
+    <!-- Mode 2 charts -->
     <canvas id="timeChart" class="hidden"></canvas>
     <canvas id="freqChart" class="hidden"></canvas>
   </div>
