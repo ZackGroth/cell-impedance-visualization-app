@@ -9,32 +9,22 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
-    /* Chart viewport */
+    /* Stop the infinite scroll feel and give the chart region a real box */
     #chart-container {
-      height: 52vh;
-      min-height: 320px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      overflow: hidden;
+      height: 52vh;          /* chart viewport height */
+      min-height: 320px;     /* ensures visible on small screens */
+      overflow: hidden;      /* prevents huge scroll caused by canvas sizing */
     }
 
-    /* Square wrapper for charts */
-    .chart-wrapper {
-      width: 100%;
-      max-width: 420px;
-      aspect-ratio: 1 / 1;
-    }
-
-    /* Canvas fills wrapper */
-    .chart-wrapper canvas {
+    /* Make Chart.js canvases actually visible */
+    #chart-container canvas {
       width: 100% !important;
       height: 100% !important;
       display: block;
     }
 
-    /* Proper hiding */
-    canvas.hidden {
+    /* IMPORTANT: allow Tailwind's .hidden to actually hide canvases */
+    #chart-container canvas.hidden {
       display: none !important;
     }
   </style>
@@ -81,30 +71,16 @@
   </div>
 
   <!-- Chart container -->
-  <div id="chart-container" class="p-2">
+  <div id="chart-container" class="flex-1 overflow-y-auto p-2">
 
-    <!-- Mode 1 -->
-    <div class="chart-wrapper">
-      <canvas id="bodeChart"></canvas>
-    </div>
+    <!-- Mode 1 charts -->
+    <canvas id="bodeChart"></canvas>
+    <canvas id="nyquistChart" class="hidden"></canvas>
+    <canvas id="humidityChart" class="hidden"></canvas>
 
-    <div class="chart-wrapper">
-      <canvas id="nyquistChart" class="hidden"></canvas>
-    </div>
-
-    <div class="chart-wrapper">
-      <canvas id="humidityChart" class="hidden"></canvas>
-    </div>
-
-    <!-- Mode 2 -->
-    <div class="chart-wrapper">
-      <canvas id="timeChart" class="hidden"></canvas>
-    </div>
-
-    <div class="chart-wrapper">
-      <canvas id="freqChart" class="hidden"></canvas>
-    </div>
-
+    <!-- Mode 2 charts -->
+    <canvas id="timeChart" class="hidden"></canvas>
+    <canvas id="freqChart" class="hidden"></canvas>
   </div>
 
   <!-- Live Data Table -->
