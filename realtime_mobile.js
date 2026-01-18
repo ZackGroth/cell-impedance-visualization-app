@@ -279,7 +279,7 @@ window.onload = () => {
   });
 
   // Create charts (two datasets for time/freq so paper mode can show two measurements)
-  bodeChart = new Chart(document.getElementById('bodeChart'), {
+  bodeChart = new Chart(document.getElementById('bodeChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
       { label: '|Z| (dB)', data: [], pointRadius: 2, fill: false },
@@ -296,7 +296,7 @@ window.onload = () => {
     }
   });
 
-  nyquistChart = new Chart(document.getElementById('nyquistChart'), {
+  nyquistChart = new Chart(document.getElementById('nyquistChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
       { label: 'Nyquist', data: [], pointRadius: 3, showLine: true, fill: false, tension: 0.2 }
@@ -312,7 +312,7 @@ window.onload = () => {
     }
   });
 
-  humidityChart = new Chart(document.getElementById('humidityChart'), {
+  humidityChart = new Chart(document.getElementById('humidityChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
       { label: 'Ingress (µL)', data: [], pointRadius: 2, fill: false, tension: 0.2 }
@@ -328,7 +328,7 @@ window.onload = () => {
     }
   });
 
-  timeChart = new Chart(document.getElementById('timeChart'), {
+  timeChart = new Chart(document.getElementById('timeChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
       { label: 'Z_Mag', data: [], pointRadius: 2, fill: false },
@@ -345,7 +345,7 @@ window.onload = () => {
     }
   });
 
-  freqChart = new Chart(document.getElementById('freqChart'), {
+  freqChart = new Chart(document.getElementById('freqChart').getContext('2d'), {
     type: 'scatter',
     data: { datasets: [
       { label: 'Z_Mag', data: [], pointRadius: 3, showLine: false },
