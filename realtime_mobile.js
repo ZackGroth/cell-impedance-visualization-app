@@ -287,7 +287,8 @@ window.onload = () => {
     ]},
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       animation: false,
       scales: {
         x: { type: 'logarithmic', title: { display: true, text: 'Frequency (Hz)' } },
@@ -303,7 +304,8 @@ window.onload = () => {
     ]},
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       animation: false,
       scales: {
         x: { title: { display: true, text: 'Real (Ω)' } },
@@ -319,7 +321,8 @@ window.onload = () => {
     ]},
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       animation: false,
       scales: {
         x: { title: { display: true, text: 'Time (s)' } },
@@ -336,7 +339,8 @@ window.onload = () => {
     ]},
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       animation: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Time (s)' } },
@@ -353,7 +357,8 @@ window.onload = () => {
     ]},
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       animation: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Frequency (Hz)' } },
