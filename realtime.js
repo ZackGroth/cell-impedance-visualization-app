@@ -23,15 +23,12 @@ let currentViewMode = 'bodeNyquist';
 
 // ------------------------- UTIL: RESIZE FIX -------------------------
 function forceResizeAllCharts() {
-  // Chart.js often measures 0px when canvas was hidden -> tiny charts after toggling.
-  // Do a resize on the next paint frame (after DOM visibility changes apply).
   requestAnimationFrame(() => {
     bodeChart?.resize();
     nyquistChart?.resize();
     timeChart?.resize();
     freqChart?.resize();
 
-    // "none" prevents animation / reflow jank
     bodeChart?.update('none');
     nyquistChart?.update('none');
     timeChart?.update('none');
@@ -88,11 +85,9 @@ function setViewMode(mode) {
     }
   }
 
-  // Critical: charts must resize AFTER the new container is visible.
   forceResizeAllCharts();
 }
 
-// Extra safety: resize when browser window resizes
 window.addEventListener('resize', () => forceResizeAllCharts());
 
 // ------------------------- BLE NOTIFICATIONS -------------------------
@@ -150,11 +145,16 @@ function updateCharts() {
   nyquistChart.update('none');
 
   // ----- TIME vs |Z| -----
-  timeChart.data.datasets[0].data = timeMagData;
+  // If paper mode rebuilt datasets dynamically, keep using dataset[0] as live stream target.
+  if (timeChart.data.datasets.length > 0) {
+    timeChart.data.datasets[0].data = timeMagData;
+  }
   timeChart.update('none');
 
   // ----- FREQ vs |Z| -----
-  freqChart.data.datasets[0].data = freqMagData;
+  if (freqChart.data.datasets.length > 0) {
+    freqChart.data.datasets[0].data = freqMagData;
+  }
   freqChart.update('none');
 }
 
@@ -181,50 +181,83 @@ function updateTable(data) {
   document.querySelector('.table-scroll').scrollTop = tableBody.scrollHeight;
 }
 
-// ------------------------- PAPER MODE LOADERS -------------------------
+// ------------------------- PAPER MODE: DYNAMIC DATASETS -------------------------
+function getZSeriesFromPaperData(P) {
+  // Returns an array of { name, values } for any zMag* arrays that match time length.
+  const series = [];
+  if (!P || !Array.isArray(P.time)) return series;
+
+  const n = P.time.length;
+
+  if (Array.isArray(P.zMag1) && P.zMag1.length === n) series.push({ name: 'Z_Mag', values: P.zMag1 });
+  if (Array.isArray(P.zMag2) && P.zMag2.length === n) series.push({ name: 'Z_Mag (2)', values: P.zMag2 });
+
+  return series;
+}
+
+function applyTimeChartDatasets(chart, time, zSeries) {
+  chart.data.datasets = zSeries.map(s => ({
+    label: s.name,
+    data: time.map((t, i) => ({ x: t, y: s.values[i] })),
+    pointRadius: 3,
+    fill: false
+  }));
+  chart.update();
+}
+
+function applyFreqChartDatasets(chart, time, freqHz, zSeries) {
+  chart.data.datasets = zSeries.map(s => ({
+    label: s.name,
+    data: time.map((_, i) => ({ x: freqHz, y: s.values[i] })),
+    pointRadius: 4,
+    showLine: false
+  }));
+  chart.update();
+}
+
 function loadPaperTimeFreq() {
-  if (!window.PAPER_DATA) {
-    console.error("PAPER_DATA not loaded.");
+  if (!window.PAPER_DATA) return;
+
+  const P = window.PAPER_DATA;
+  const { time, frequencyHz } = P;
+
+  const zSeries = getZSeriesFromPaperData(P);
+  if (zSeries.length === 0) {
+    console.error("No valid zMag arrays found (need zMag1 with same length as time).");
     return;
   }
 
-  const { time, zMag1, zMag2, frequencyHz } = window.PAPER_DATA;
-
-  // |Z| vs Time (two measurements)
-  const series1_time = time.map((t, i) => ({ x: t, y: zMag1[i] }));
-  const series2_time = time.map((t, i) => ({ x: t, y: zMag2[i] }));
-
-  timeChart.data.datasets[0].label = 'Z_Mag (measurement 1)';
-  timeChart.data.datasets[1].label = 'Z_Mag (measurement 2)';
-  timeChart.data.datasets[0].data = series1_time;
-  timeChart.data.datasets[1].data = series2_time;
-  timeChart.update();
-
-  // |Z| vs Frequency (all points at same freq -> vertical stack of points)
-  const series1_freq = time.map((_, i) => ({ x: frequencyHz, y: zMag1[i] }));
-  const series2_freq = time.map((_, i) => ({ x: frequencyHz, y: zMag2[i] }));
-
-  freqChart.data.datasets[0].label = 'Z_Mag (measurement 1)';
-  freqChart.data.datasets[1].label = 'Z_Mag (measurement 2)';
-  freqChart.data.datasets[0].data = series1_freq;
-  freqChart.data.datasets[1].data = series2_freq;
-  freqChart.update();
+  applyTimeChartDatasets(timeChart, time, zSeries);
+  applyFreqChartDatasets(freqChart, time, frequencyHz, zSeries);
 }
 
 function loadPaperBodeMagnitudeOnly() {
   if (!window.PAPER_DATA) return;
 
-  const { time, zMag1, zMag2, frequencyHz } = window.PAPER_DATA;
-  const series1 = time.map((_, i) => ({ x: frequencyHz, y: zMag1[i] }));
-  const series2 = time.map((_, i) => ({ x: frequencyHz, y: zMag2[i] }));
+  const P = window.PAPER_DATA;
+  const { time, frequencyHz } = P;
 
-  bodeChart.data.datasets[0].label = 'Z_Mag (measurement 1)';
-  bodeChart.data.datasets[1].label = 'Z_Mag (measurement 2)';
-  bodeChart.data.datasets[0].data = series1;
-  bodeChart.data.datasets[1].data = series2;
+  const zSeries = getZSeriesFromPaperData(P);
+  if (zSeries.length === 0) {
+    console.error("No valid zMag arrays found for bode magnitude-only fallback.");
+    return;
+  }
+
+  // Plot each Z series as a vertical stack at a single frequency (since only magnitude is provided)
+  const datasets = zSeries.map((s) => ({
+    label: s.name,
+    data: time.map((_, i) => ({ x: frequencyHz, y: s.values[i] })),
+    pointRadius: 3,
+    fill: false,
+    showLine: false
+  }));
+
+  // Replace bode datasets with magnitude-only datasets
+  bodeChart.data.datasets = datasets;
 
   bodeChart.options.scales.x.type = 'linear';
   bodeChart.options.scales.x.title.text = 'Frequency (Hz)';
+  // In this fallback, we only have one y-axis effectively
   bodeChart.options.scales.y1.title.text = 'Z_Mag (Ω)';
   bodeChart.options.scales.y2.display = false;
 
@@ -248,7 +281,7 @@ window.onload = () => {
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false, // IMPORTANT: prevents shrink/expand weirdness
+      maintainAspectRatio: false,
       animation: false,
       scales: {
         x: { type: 'logarithmic', title: { display: true, text: 'Frequency (Hz)' } },
@@ -275,7 +308,7 @@ window.onload = () => {
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false, // IMPORTANT
+      maintainAspectRatio: false,
       animation: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Real (Ω)' } },
@@ -284,18 +317,18 @@ window.onload = () => {
     }
   });
 
-  // ----- TIME CHART (|Z| vs time) -----
+  // ----- TIME CHART -----
+  // Start with ONE dataset; paper mode will replace datasets dynamically if needed.
   timeChart = new Chart(document.getElementById('timeChart').getContext('2d'), {
     type: 'line',
     data: {
       datasets: [
-        { label: 'Z_Mag', pointRadius: 3, fill: false, data: [] },
-        { label: '', pointRadius: 3, fill: false, data: [] } // second dataset used for paper mode
+        { label: 'Z_Mag', pointRadius: 3, fill: false, data: [] }
       ]
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false, // IMPORTANT
+      maintainAspectRatio: false,
       animation: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Time (s)' } },
@@ -304,18 +337,18 @@ window.onload = () => {
     }
   });
 
-  // ----- FREQ CHART (|Z| vs frequency) -----
+  // ----- FREQ CHART -----
+  // Start with ONE dataset; paper mode will replace datasets dynamically if needed.
   freqChart = new Chart(document.getElementById('freqChart').getContext('2d'), {
     type: 'scatter',
     data: {
       datasets: [
-        { label: 'Z_Mag', pointRadius: 4, showLine: false, data: [] },
-        { label: '', pointRadius: 4, showLine: false, data: [] } // second dataset used for paper mode
+        { label: 'Z_Mag', pointRadius: 4, showLine: false, data: [] }
       ]
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false, // IMPORTANT
+      maintainAspectRatio: false,
       animation: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Frequency (Hz)' } },
@@ -333,7 +366,7 @@ window.onload = () => {
     const connectBtn = document.getElementById('bleConnectButton');
     if (connectBtn) connectBtn.disabled = true;
 
-    // Populate time+freq requested view (you can set default view to timeFreq if you want)
+    // Populate time+freq requested view
     loadPaperTimeFreq();
 
     // If user flips to bodeNyquist during paper mode, show magnitude-only fallback
@@ -344,6 +377,5 @@ window.onload = () => {
     }
   }
 
-  // One more resize after everything initializes
   forceResizeAllCharts();
 };

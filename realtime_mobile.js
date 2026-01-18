@@ -49,12 +49,9 @@ function showCanvas(id) {
 }
 
 function setActiveTabStyles() {
-  // Mode 1 tabs
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('bg-gray-800'));
-  // Mode 2 tabs
   document.querySelectorAll('.tab-btn2').forEach(b => b.classList.remove('bg-gray-800'));
 
-  // Apply active based on current mode/tab
   if (currentMode === 'bodeNyquist') {
     const btn = document.querySelector(`.tab-btn[data-tab="${currentTab}"]`);
     if (btn) btn.classList.add('bg-gray-800');
@@ -62,6 +59,16 @@ function setActiveTabStyles() {
     const btn = document.querySelector(`.tab-btn2[data-tab="${currentTab}"]`);
     if (btn) btn.classList.add('bg-gray-800');
   }
+}
+
+function forceResizeAllCharts() {
+  requestAnimationFrame(() => {
+    bodeChart?.resize(); bodeChart?.update('none');
+    nyquistChart?.resize(); nyquistChart?.update('none');
+    humidityChart?.resize(); humidityChart?.update('none');
+    timeChart?.resize(); timeChart?.update('none');
+    freqChart?.resize(); freqChart?.update('none');
+  });
 }
 
 function setMode(mode) {
@@ -83,15 +90,7 @@ function setMode(mode) {
   }
 
   setActiveTabStyles();
-
-  // After visibility changes, force Chart.js to re-measure
-  requestAnimationFrame(() => {
-    bodeChart?.resize(); bodeChart?.update('none');
-    nyquistChart?.resize(); nyquistChart?.update('none');
-    humidityChart?.resize(); humidityChart?.update('none');
-    timeChart?.resize(); timeChart?.update('none');
-    freqChart?.resize(); freqChart?.update('none');
-  });
+  forceResizeAllCharts();
 }
 
 function setTab(tabName) {
@@ -107,14 +106,7 @@ function setTab(tabName) {
   }
 
   setActiveTabStyles();
-
-  requestAnimationFrame(() => {
-    bodeChart?.resize(); bodeChart?.update('none');
-    nyquistChart?.resize(); nyquistChart?.update('none');
-    humidityChart?.resize(); humidityChart?.update('none');
-    timeChart?.resize(); timeChart?.update('none');
-    freqChart?.resize(); freqChart?.update('none');
-  });
+  forceResizeAllCharts();
 }
 
 // ------------------------- BLE CONNECT -------------------------
@@ -233,52 +225,68 @@ function updateTable(d) {
   if (tableBody.children.length > 100) tableBody.removeChild(tableBody.children[0]);
 }
 
-// ------------------------- PAPER DATA LOADING -------------------------
+// ------------------------- PAPER MODE: DYNAMIC DATASETS -------------------------
+function getZSeriesFromPaperData(P) {
+  const series = [];
+  if (!P || !Array.isArray(P.time)) return series;
+
+  const n = P.time.length;
+
+  if (Array.isArray(P.zMag1) && P.zMag1.length === n) series.push({ name: 'Z_Mag', values: P.zMag1 });
+  if (Array.isArray(P.zMag2) && P.zMag2.length === n) series.push({ name: 'Z_Mag (2)', values: P.zMag2 });
+
+  return series;
+}
+
+function applyTimeChartDatasets(chart, time, zSeries) {
+  chart.data.datasets = zSeries.map(s => ({
+    label: s.name,
+    data: time.map((t, i) => ({ x: t, y: s.values[i] })),
+    pointRadius: 2,
+    fill: false
+  }));
+  chart.update();
+}
+
+function applyFreqChartDatasets(chart, time, freqHz, zSeries) {
+  chart.data.datasets = zSeries.map(s => ({
+    label: s.name,
+    data: time.map((_, i) => ({ x: freqHz, y: s.values[i] })),
+    pointRadius: 3,
+    showLine: false
+  }));
+  chart.update();
+}
+
 function loadPaperTimeFreq() {
   if (!window.PAPER_DATA) return;
 
-  const { time, zMag1, zMag2, frequencyHz } = window.PAPER_DATA;
+  const P = window.PAPER_DATA;
+  const { time, frequencyHz } = P;
 
-  // |Z| vs Time: plot both measurements
-  const s1t = time.map((t, i) => ({ x: t, y: zMag1[i] }));
-  const s2t = time.map((t, i) => ({ x: t, y: zMag2[i] }));
+  const zSeries = getZSeriesFromPaperData(P);
+  if (zSeries.length === 0) {
+    console.error("No valid zMag arrays found (need zMag1 with same length as time).");
+    return;
+  }
 
-  timeChart.data.datasets[0].label = 'Z_Mag (measurement 1)';
-  timeChart.data.datasets[1].label = 'Z_Mag (measurement 2)';
-  timeChart.data.datasets[0].data = s1t;
-  timeChart.data.datasets[1].data = s2t;
-  timeChart.update();
-
-  // |Z| vs Frequency: all at same freq -> vertical stacks
-  const s1f = time.map((_, i) => ({ x: frequencyHz, y: zMag1[i] }));
-  const s2f = time.map((_, i) => ({ x: frequencyHz, y: zMag2[i] }));
-
-  freqChart.data.datasets[0].label = 'Z_Mag (measurement 1)';
-  freqChart.data.datasets[1].label = 'Z_Mag (measurement 2)';
-  freqChart.data.datasets[0].data = s1f;
-  freqChart.data.datasets[1].data = s2f;
-  freqChart.update();
+  applyTimeChartDatasets(timeChart, time, zSeries);
+  applyFreqChartDatasets(freqChart, time, frequencyHz, zSeries);
 }
 
 // ------------------------- INIT -------------------------
 window.onload = () => {
-  // Wire view mode dropdown
   const viewSel = document.getElementById('viewMode');
-  if (viewSel) {
-    viewSel.addEventListener('change', (e) => setMode(e.target.value));
-  }
+  if (viewSel) viewSel.addEventListener('change', (e) => setMode(e.target.value));
 
-  // Wire tab buttons (mode 1)
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => setTab(btn.dataset.tab));
   });
 
-  // Wire tab buttons (mode 2)
   document.querySelectorAll('.tab-btn2').forEach(btn => {
     btn.addEventListener('click', () => setTab(btn.dataset.tab));
   });
 
-  // Create charts (two datasets for time/freq so paper mode can show two measurements)
   bodeChart = new Chart(document.getElementById('bodeChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
@@ -331,8 +339,7 @@ window.onload = () => {
   timeChart = new Chart(document.getElementById('timeChart').getContext('2d'), {
     type: 'line',
     data: { datasets: [
-      { label: 'Z_Mag', data: [], pointRadius: 2, fill: false },
-      { label: '', data: [], pointRadius: 2, fill: false } // for paper measurement 2
+      { label: 'Z_Mag', data: [], pointRadius: 2, fill: false }
     ]},
     options: {
       responsive: true,
@@ -348,8 +355,7 @@ window.onload = () => {
   freqChart = new Chart(document.getElementById('freqChart').getContext('2d'), {
     type: 'scatter',
     data: { datasets: [
-      { label: 'Z_Mag', data: [], pointRadius: 3, showLine: false },
-      { label: '', data: [], pointRadius: 3, showLine: false } // for paper measurement 2
+      { label: 'Z_Mag', data: [], pointRadius: 3, showLine: false }
     ]},
     options: {
       responsive: true,
@@ -362,15 +368,12 @@ window.onload = () => {
     }
   });
 
-  // Safety: start with exactly one canvas visible
   setMode(viewSel?.value || 'bodeNyquist');
 
-  // Paper mode
   if (PAPER_MODE) {
     const connectBtn = document.getElementById('connectBtn');
     if (connectBtn) connectBtn.disabled = true;
 
-    // For Faisal’s figures, default to time/freq and load paper data
     if (viewSel) viewSel.value = 'timeFreq';
     setMode('timeFreq');
     loadPaperTimeFreq();
