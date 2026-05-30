@@ -1,381 +1,453 @@
 /**
  * realtime.js
- * Handles Bluetooth communication with the ESP32 device.
- * Parses incoming impedance data, updates plots in real-time,
- * and manages the live data table.
+ * Handles the web app controls, BLE packet parsing, impedance calculations,
+ * chart updates, and live tables.
  */
 
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
-const PAPER_MODE = true; // set true for screenshots, false for real BLE
+const DEMO_MODE = false;
 
-let bodeChart, nyquistChart, timeChart, freqChart;
-let tableBody = document.querySelector('#liveDataTable tbody');
-let collecting = true;
+let bodeChart;
+let nyquistChart;
+let humidityChart;
+let collectionTimer = null;
+let collecting = false;
 
-// Live data stores
-let impedanceData = [];     // for bode: { x: freq, zDb, phase }
-let nyquistData = [];       // for nyquist: { real, imag, freq }
-let timeMagData = [];       // for time chart: { x: timeSec, y: zMag }
-let freqMagData = [];       // for freq chart: { x: freq, y: zMag }
+const impedanceRows = [];
+const humidityRows = [];
 
-let currentViewMode = 'bodeNyquist';
+const nodes = {
+  A: { label: 'ESP32-A', device: null },
+  B: { label: 'ESP32-B', device: null }
+};
 
-// ------------------------- UTIL: RESIZE FIX -------------------------
-function forceResizeAllCharts() {
+const els = {
+  themeToggle: document.getElementById('themeToggle'),
+  startCycleButton: document.getElementById('startCycleButton'),
+  pairNodeAButton: document.getElementById('pairNodeAButton'),
+  pairNodeBButton: document.getElementById('pairNodeBButton'),
+  collectionInterval: document.getElementById('collectionInterval'),
+  viewMode: document.getElementById('viewMode'),
+  collectionStatus: document.getElementById('collectionStatus'),
+  bodeView: document.getElementById('bodeView'),
+  nyquistView: document.getElementById('nyquistView'),
+  humidityView: document.getElementById('humidityView'),
+  bodeTableBody: document.getElementById('bodeTableBody'),
+  nyquistTableBody: document.getElementById('nyquistTableBody'),
+  humidityTableBody: document.getElementById('humidityTableBody')
+};
+
+function numberFrom(data, keys) {
+  for (const key of keys) {
+    const value = data[key];
+    if (value !== undefined && value !== null && value !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function stringFrom(data, keys, fallback = '') {
+  for (const key of keys) {
+    const value = data[key];
+    if (value !== undefined && value !== null && value !== '') return String(value);
+  }
+  return fallback;
+}
+
+function normalizeImpedancePacket(data, fallbackDeviceId = 'ESP32') {
+  const timestamp = numberFrom(data, ['timestamp', 'time', 't']);
+  const frequency = numberFrom(data, ['frequency', 'freq', 'frequencyHz']);
+  const real = numberFrom(data, ['real', 'realImpedance', 'real impedance']);
+  const imag = numberFrom(data, ['imag', 'imaginary', 'imaginaryImpedance', 'imaginary impedance']);
+  const deviceId = stringFrom(data, ['deviceId', 'deviceID', 'id'], fallbackDeviceId);
+
+  if (timestamp === null || frequency === null || real === null || imag === null) {
+    return null;
+  }
+
+  const magnitude = Math.sqrt((real ** 2) + (imag ** 2));
+  const phase = Math.atan2(imag, real) * (180 / Math.PI);
+  const magnitudeDb = 20 * Math.log10(magnitude);
+
+  return {
+    timestamp,
+    timeSec: timestamp > 1000000000 ? timestamp : timestamp / 1000,
+    deviceId,
+    frequency,
+    real,
+    imag,
+    magnitude,
+    magnitudeDb,
+    phase
+  };
+}
+
+function normalizeHumidityPacket(data, fallbackDeviceId = 'ESP32') {
+  const humidity = numberFrom(data, ['humidity', 'humidity %', 'relativeHumidity', 'relative humidity %', 'rh']);
+  if (humidity === null) return null;
+
+  const timestamp = numberFrom(data, ['timestamp', 'time', 't']) ?? Date.now();
+
+  return {
+    timestamp,
+    timeSec: timestamp > 1000000000 ? timestamp / 1000 : timestamp / 1000,
+    deviceId: stringFrom(data, ['deviceId', 'deviceID', 'id'], fallbackDeviceId),
+    humidity
+  };
+}
+
+function formatTime(timestamp) {
+  if (timestamp > 1000000000) {
+    return new Date(timestamp).toLocaleTimeString();
+  }
+  return `${(timestamp / 1000).toFixed(2)} s`;
+}
+
+function trimRows(rows, maxRows = 200) {
+  while (rows.length > maxRows) rows.shift();
+}
+
+function addPacket(data, fallbackDeviceId) {
+  const impedance = normalizeImpedancePacket(data, fallbackDeviceId);
+  if (impedance) {
+    impedanceRows.push(impedance);
+    trimRows(impedanceRows);
+    updateImpedanceViews();
+  }
+
+  const humidity = normalizeHumidityPacket(data, fallbackDeviceId);
+  if (humidity) {
+    humidityRows.push(humidity);
+    trimRows(humidityRows);
+    updateHumidityView();
+  }
+
+  if (!impedance && !humidity) {
+    console.warn('Packet did not include supported data fields:', data);
+  }
+}
+
+function updateImpedanceViews() {
+  const sortedByFrequency = [...impedanceRows].sort((a, b) => a.frequency - b.frequency);
+  const deviceIds = [...new Set(sortedByFrequency.map(row => row.deviceId))];
+
+  bodeChart.data.datasets = deviceIds.flatMap(deviceId => {
+    const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    return [
+      {
+        label: `${deviceId} |Z| (dB)`,
+        yAxisID: 'magnitudeAxis',
+        data: rows.map(row => ({ x: row.frequency, y: row.magnitudeDb })),
+        pointRadius: 3,
+        borderWidth: 2
+      },
+      {
+        label: `${deviceId} Phase (deg)`,
+        yAxisID: 'phaseAxis',
+        data: rows.map(row => ({ x: row.frequency, y: row.phase })),
+        pointRadius: 3,
+        borderWidth: 2,
+        borderDash: [5, 4]
+      }
+    ];
+  });
+  bodeChart.update('none');
+
+  nyquistChart.data.datasets = deviceIds.map(deviceId => {
+    const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    return {
+      label: deviceId,
+      data: rows.map(row => ({ x: row.real, y: -row.imag })),
+      pointRadius: 4,
+      borderWidth: 2,
+      tension: 0.2
+    };
+  });
+  nyquistChart.update('none');
+
+  renderImpedanceTables();
+}
+
+function updateHumidityView() {
+  const deviceIds = [...new Set(humidityRows.map(row => row.deviceId))];
+  humidityChart.data.datasets = deviceIds.map(deviceId => {
+    const rows = humidityRows.filter(row => row.deviceId === deviceId);
+    return {
+      label: `${deviceId} humidity (%)`,
+      data: rows.map(row => ({ x: row.timeSec, y: row.humidity })),
+      pointRadius: 3,
+      borderWidth: 2
+    };
+  });
+  humidityChart.update('none');
+  renderHumidityTable();
+}
+
+function renderImpedanceTables() {
+  const rows = impedanceRows.slice(-80).map(row => `
+    <tr>
+      <td>${formatTime(row.timestamp)}</td>
+      <td>${row.deviceId}</td>
+      <td>${row.frequency.toFixed(2)}</td>
+      <td>${row.real.toFixed(3)}</td>
+      <td>${row.imag.toFixed(3)}</td>
+      <td>${row.magnitude.toFixed(3)}</td>
+      <td>${row.phase.toFixed(2)}</td>
+    </tr>
+  `).join('');
+
+  els.bodeTableBody.innerHTML = rows;
+
+  els.nyquistTableBody.innerHTML = impedanceRows.slice(-80).map(row => `
+    <tr>
+      <td>${formatTime(row.timestamp)}</td>
+      <td>${row.deviceId}</td>
+      <td>${row.frequency.toFixed(2)}</td>
+      <td>${row.real.toFixed(3)}</td>
+      <td>${(-row.imag).toFixed(3)}</td>
+      <td>${row.magnitude.toFixed(3)}</td>
+      <td>${row.phase.toFixed(2)}</td>
+    </tr>
+  `).join('');
+}
+
+function renderHumidityTable() {
+  els.humidityTableBody.innerHTML = humidityRows.slice(-80).map(row => `
+    <tr>
+      <td>${formatTime(row.timestamp)}</td>
+      <td>${row.deviceId}</td>
+      <td>${row.humidity.toFixed(2)}</td>
+    </tr>
+  `).join('');
+}
+
+function setView(viewName) {
+  const views = {
+    bode: els.bodeView,
+    nyquist: els.nyquistView,
+    humidity: els.humidityView
+  };
+
+  Object.entries(views).forEach(([name, view]) => {
+    view.classList.toggle('active', name === viewName);
+  });
+
   requestAnimationFrame(() => {
     bodeChart?.resize();
     nyquistChart?.resize();
-    timeChart?.resize();
-    freqChart?.resize();
-
-    bodeChart?.update('none');
-    nyquistChart?.update('none');
-    timeChart?.update('none');
-    freqChart?.update('none');
+    humidityChart?.resize();
   });
 }
 
-// ------------------------- UI BUTTONS -------------------------
-document.getElementById('toggleCollectButton').addEventListener('click', () => {
-  collecting = !collecting;
-  document.getElementById('toggleCollectButton').textContent =
-    collecting ? '⏸️ Pause Collection' : '▶️ Start Collection';
-});
-
-document.getElementById('bleConnectButton').addEventListener('click', async () => {
-  if (PAPER_MODE) return;
-
-  try {
-    const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }]
-    });
-
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
-
-    await characteristic.startNotifications();
-    characteristic.addEventListener('characteristicvaluechanged', handleNotification);
-
-  } catch (error) {
-    console.error('BLE connection failed:', error);
-  }
-});
-
-// Mode toggle (expects <select id="viewMode">)
-const viewModeEl = document.getElementById('viewMode');
-if (viewModeEl) {
-  viewModeEl.addEventListener('change', (e) => setViewMode(e.target.value));
+function setStatus(message) {
+  els.collectionStatus.textContent = message;
 }
 
-function setViewMode(mode) {
-  currentViewMode = mode;
+async function pairNode(slot) {
+  if (!navigator.bluetooth) {
+    throw new Error('Web Bluetooth is not available in this browser.');
+  }
 
-  const bodeNyq = document.getElementById('charts-bodeNyquist');
-  const timeFreq = document.getElementById('charts-timeFreq');
+  const device = await navigator.bluetooth.requestDevice({
+    filters: [{ services: [SERVICE_UUID] }]
+  });
 
-  if (bodeNyq && timeFreq) {
-    if (mode === 'bodeNyquist') {
-      bodeNyq.style.display = '';
-      timeFreq.style.display = 'none';
-    } else {
-      bodeNyq.style.display = 'none';
-      timeFreq.style.display = '';
+  nodes[slot].device = device;
+  const button = slot === 'A' ? els.pairNodeAButton : els.pairNodeBButton;
+  button.textContent = `${nodes[slot].label} Paired`;
+  button.classList.add('paired');
+  setStatus(`${nodes[slot].label} paired: ${device.name || device.id}`);
+}
+
+async function readNodePacket(slot) {
+  const node = nodes[slot];
+  if (!node.device) return null;
+
+  setStatus(`Connecting to ${node.label}...`);
+  const server = await node.device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+  const value = await characteristic.readValue();
+  const text = new TextDecoder().decode(value);
+  node.device.gatt.disconnect();
+
+  return {
+    fallbackDeviceId: node.label,
+    packet: JSON.parse(text)
+  };
+}
+
+function demoPacket(deviceId) {
+  const timestamp = Date.now();
+  const frequencyOptions = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+  const frequency = frequencyOptions[impedanceRows.length % frequencyOptions.length];
+  const resistance = 1000;
+  const capacitance = 0.000001;
+  const omega = 2 * Math.PI * frequency;
+  const imag = -1 / (omega * capacitance);
+
+  return {
+    timestamp,
+    frequency,
+    real: resistance,
+    imag,
+    deviceId,
+    humidity: 52 + Math.sin(impedanceRows.length / 3) * 1.5
+  };
+}
+
+async function collectOnce() {
+  try {
+    if (DEMO_MODE) {
+      addPacket(demoPacket('ESP32-A'), 'ESP32-A');
+      addPacket(demoPacket('ESP32-B'), 'ESP32-B');
+      setStatus(`Demo packets received at ${new Date().toLocaleTimeString()}`);
+      return;
     }
-  }
 
-  forceResizeAllCharts();
+    const pairedSlots = Object.keys(nodes).filter(slot => nodes[slot].device);
+    if (pairedSlots.length === 0) {
+      throw new Error('Pair ESP32-A or ESP32-B before starting collection.');
+    }
+
+    for (const slot of pairedSlots) {
+      const result = await readNodePacket(slot);
+      if (result) addPacket(result.packet, result.fallbackDeviceId);
+    }
+
+    setStatus(`Last packet received at ${new Date().toLocaleTimeString()}`);
+  } catch (error) {
+    collecting = false;
+    stopCollectionCycle();
+    setStatus(error.message);
+    console.error(error);
+  }
 }
 
-window.addEventListener('resize', () => forceResizeAllCharts());
+function startCollectionCycle() {
+  if (collecting) return;
 
-// ------------------------- BLE NOTIFICATIONS -------------------------
-function handleNotification(event) {
+  collecting = true;
+  els.startCycleButton.textContent = 'Stop Collection Cycle';
+
+  const intervalMs = Number(els.collectionInterval.value);
+  setStatus(`Collecting every ${intervalMs / 1000} seconds`);
+
+  collectOnce();
+  collectionTimer = window.setInterval(collectOnce, intervalMs);
+}
+
+function stopCollectionCycle() {
+  collecting = false;
+  els.startCycleButton.textContent = 'Start Collection Cycle';
+
+  if (collectionTimer) {
+    window.clearInterval(collectionTimer);
+    collectionTimer = null;
+  }
+}
+
+function toggleCollectionCycle() {
+  if (collecting) {
+    stopCollectionCycle();
+    setStatus('Collection stopped');
+  } else {
+    startCollectionCycle();
+  }
+}
+
+function resetCollectionTimerIfRunning() {
   if (!collecting) return;
-
-  const value = new TextDecoder().decode(event.target.value);
-
-  try {
-    const data = JSON.parse(value);
-    updateTable(data);
-    processData(data);
-    updateCharts();
-  } catch (e) {
-    console.warn('Bad BLE packet:', value);
-  }
+  stopCollectionCycle();
+  startCollectionCycle();
 }
 
-function processData(data) {
-  const freq = data.freq;
-  const real = data.real;
-  const imag = data.imag;
-
-  const zMag = Math.sqrt(real ** 2 + imag ** 2);
-  const zDb = 20 * Math.log10(zMag);
-  const phase = Math.atan2(imag, real) * (180 / Math.PI);
-  const timeSec = parseFloat((data.timestamp / 1000).toFixed(2));
-
-  // Bode data (sorted by frequency)
-  impedanceData.push({ x: freq, zDb, phase });
-  impedanceData.sort((a, b) => a.x - b.x);
-
-  // Nyquist data
-  nyquistData.push({ real, imag, freq });
-  if (nyquistData.length > 200) nyquistData.shift();
-
-  // Time vs |Z|
-  timeMagData.push({ x: timeSec, y: zMag });
-  if (timeMagData.length > 500) timeMagData.shift();
-
-  // Frequency vs |Z|
-  freqMagData.push({ x: freq, y: zMag });
-  if (freqMagData.length > 500) freqMagData.shift();
-}
-
-function updateCharts() {
-  // ----- BODE -----
-  bodeChart.data.datasets[0].data = impedanceData.map(p => ({ x: p.x, y: p.zDb }));
-  bodeChart.data.datasets[1].data = impedanceData.map(p => ({ x: p.x, y: p.phase }));
-  bodeChart.update('none');
-
-  // ----- NYQUIST -----
-  const sortedNyquist = [...nyquistData].sort((a, b) => a.freq - b.freq);
-  nyquistChart.data.datasets[0].data = sortedNyquist.map(p => ({ x: p.real, y: -p.imag }));
-  nyquistChart.update('none');
-
-  // ----- TIME vs |Z| -----
-  // If paper mode rebuilt datasets dynamically, keep using dataset[0] as live stream target.
-  if (timeChart.data.datasets.length > 0) {
-    timeChart.data.datasets[0].data = timeMagData;
-  }
-  timeChart.update('none');
-
-  // ----- FREQ vs |Z| -----
-  if (freqChart.data.datasets.length > 0) {
-    freqChart.data.datasets[0].data = freqMagData;
-  }
-  freqChart.update('none');
-}
-
-// ------------------------- TABLE -------------------------
-function updateTable(data) {
-  const zMag = Math.sqrt(data.real ** 2 + data.imag ** 2);
-
-  const row = `
-    <tr>
-      <td>${(data.timestamp / 1000).toFixed(2)}</td>
-      <td>${data.freq}</td>
-      <td>${data.real.toFixed(2)}</td>
-      <td>${data.imag.toFixed(2)}</td>
-      <td>${zMag.toFixed(2)}</td>
-    </tr>
-  `;
-
-  tableBody.insertAdjacentHTML('beforeend', row);
-
-  if (tableBody.children.length > 50) {
-    tableBody.removeChild(tableBody.children[0]);
-  }
-
-  document.querySelector('.table-scroll').scrollTop = tableBody.scrollHeight;
-}
-
-// ------------------------- PAPER MODE: DYNAMIC DATASETS -------------------------
-function getZSeriesFromPaperData(P) {
-  // Returns an array of { name, values } for any zMag* arrays that match time length.
-  const series = [];
-  if (!P || !Array.isArray(P.time)) return series;
-
-  const n = P.time.length;
-
-  if (Array.isArray(P.zMag1) && P.zMag1.length === n) series.push({ name: 'Z_Mag', values: P.zMag1 });
-  if (Array.isArray(P.zMag2) && P.zMag2.length === n) series.push({ name: 'Z_Mag (2)', values: P.zMag2 });
-
-  return series;
-}
-
-function applyTimeChartDatasets(chart, time, zSeries) {
-  chart.data.datasets = zSeries.map(s => ({
-    label: s.name,
-    data: time.map((t, i) => ({ x: t, y: s.values[i] })),
-    pointRadius: 3,
-    fill: false
-  }));
-  chart.update();
-}
-
-function applyFreqChartDatasets(chart, time, freqHz, zSeries) {
-  chart.data.datasets = zSeries.map(s => ({
-    label: s.name,
-    data: time.map((_, i) => ({ x: freqHz, y: s.values[i] })),
-    pointRadius: 4,
-    showLine: false
-  }));
-  chart.update();
-}
-
-function loadPaperTimeFreq() {
-  if (!window.PAPER_DATA) return;
-
-  const P = window.PAPER_DATA;
-  const { time, frequencyHz } = P;
-
-  const zSeries = getZSeriesFromPaperData(P);
-  if (zSeries.length === 0) {
-    console.error("No valid zMag arrays found (need zMag1 with same length as time).");
-    return;
-  }
-
-  applyTimeChartDatasets(timeChart, time, zSeries);
-  applyFreqChartDatasets(freqChart, time, frequencyHz, zSeries);
-}
-
-function loadPaperBodeMagnitudeOnly() {
-  if (!window.PAPER_DATA) return;
-
-  const P = window.PAPER_DATA;
-  const { time, frequencyHz } = P;
-
-  const zSeries = getZSeriesFromPaperData(P);
-  if (zSeries.length === 0) {
-    console.error("No valid zMag arrays found for bode magnitude-only fallback.");
-    return;
-  }
-
-  // Plot each Z series as a vertical stack at a single frequency (since only magnitude is provided)
-  const datasets = zSeries.map((s) => ({
-    label: s.name,
-    data: time.map((_, i) => ({ x: frequencyHz, y: s.values[i] })),
-    pointRadius: 3,
-    fill: false,
-    showLine: false
-  }));
-
-  // Replace bode datasets with magnitude-only datasets
-  bodeChart.data.datasets = datasets;
-
-  bodeChart.options.scales.x.type = 'linear';
-  bodeChart.options.scales.x.title.text = 'Frequency (Hz)';
-  // In this fallback, we only have one y-axis effectively
-  bodeChart.options.scales.y1.title.text = 'Z_Mag (Ω)';
-  bodeChart.options.scales.y2.display = false;
-
-  bodeChart.update();
-
-  // Nyquist cannot be generated without real/imag
-  nyquistChart.data.datasets[0].data = [];
-  nyquistChart.update();
-}
-
-// ------------------------- INIT -------------------------
-window.onload = () => {
-  // ----- BODE CHART -----
-  bodeChart = new Chart(document.getElementById('bodeChart').getContext('2d'), {
+function initCharts() {
+  bodeChart = new Chart(document.getElementById('bodeChart'), {
     type: 'line',
     data: {
       datasets: [
-        { label: '|Z| (dB)', yAxisID: 'y1', pointRadius: 3, fill: false, data: [] },
-        { label: 'Phase (°)', yAxisID: 'y2', pointRadius: 3, fill: false, data: [] }
+        { label: '|Z| (dB)', yAxisID: 'magnitudeAxis', data: [], pointRadius: 3, borderWidth: 2 },
+        { label: 'Phase (deg)', yAxisID: 'phaseAxis', data: [], pointRadius: 3, borderWidth: 2 }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      parsing: false,
       scales: {
         x: { type: 'logarithmic', title: { display: true, text: 'Frequency (Hz)' } },
-        y1: { position: 'left', title: { display: true, text: '|Z| (dB)' } },
-        y2: { position: 'right', title: { display: true, text: 'Phase (°)' }, grid: { drawOnChartArea: false } }
+        magnitudeAxis: { position: 'left', title: { display: true, text: '|Z| (dB)' } },
+        phaseAxis: {
+          position: 'right',
+          title: { display: true, text: 'Phase (deg)' },
+          grid: { drawOnChartArea: false }
+        }
       }
     }
   });
 
-  // ----- NYQUIST CHART -----
-  nyquistChart = new Chart(document.getElementById('nyquistChart').getContext('2d'), {
-    type: 'line',
-    data: {
-      datasets: [{
-        label: 'Nyquist Plot',
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        borderWidth: 2,
-        tension: 0.3,
-        fill: false,
-        showLine: true,
-        data: []
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      scales: {
-        x: { type: 'linear', title: { display: true, text: 'Real (Ω)' } },
-        y: { type: 'linear', title: { display: true, text: 'Imag (Ω)' }, reverse: true }
-      }
-    }
-  });
-
-  // ----- TIME CHART -----
-  // Start with ONE dataset; paper mode will replace datasets dynamically if needed.
-  timeChart = new Chart(document.getElementById('timeChart').getContext('2d'), {
+  nyquistChart = new Chart(document.getElementById('nyquistChart'), {
     type: 'line',
     data: {
       datasets: [
-        { label: 'Z_Mag', pointRadius: 3, fill: false, data: [] }
+        { label: 'Nyquist', data: [], pointRadius: 4, borderWidth: 2, tension: 0.2 }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      parsing: false,
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'Real (ohm)' } },
+        y: { type: 'linear', title: { display: true, text: '-Imaginary (ohm)' } }
+      }
+    }
+  });
+
+  humidityChart = new Chart(document.getElementById('humidityChart'), {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'Humidity (%)', data: [], pointRadius: 3, borderWidth: 2 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      parsing: false,
       scales: {
         x: { type: 'linear', title: { display: true, text: 'Time (s)' } },
-        y: { title: { display: true, text: 'Z_Mag (Ω)' } }
+        y: { title: { display: true, text: 'Humidity (%)' } }
       }
     }
   });
+}
 
-  // ----- FREQ CHART -----
-  // Start with ONE dataset; paper mode will replace datasets dynamically if needed.
-  freqChart = new Chart(document.getElementById('freqChart').getContext('2d'), {
-    type: 'scatter',
-    data: {
-      datasets: [
-        { label: 'Z_Mag', pointRadius: 4, showLine: false, data: [] }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      scales: {
-        x: { type: 'linear', title: { display: true, text: 'Frequency (Hz)' } },
-        y: { title: { display: true, text: 'Z_Mag (Ω)' } }
-      }
-    }
+window.addEventListener('load', () => {
+  initCharts();
+  setView(els.viewMode.value);
+
+  els.themeToggle.addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+    els.themeToggle.textContent = document.body.classList.contains('dark')
+      ? 'Light Mode'
+      : 'Dark Mode';
   });
 
-  // Default view
-  setViewMode(currentViewMode);
-  if (viewModeEl) viewModeEl.value = currentViewMode;
+  els.viewMode.addEventListener('change', event => setView(event.target.value));
+  els.startCycleButton.addEventListener('click', toggleCollectionCycle);
+  els.pairNodeAButton.addEventListener('click', () => pairNode('A').catch(error => setStatus(error.message)));
+  els.pairNodeBButton.addEventListener('click', () => pairNode('B').catch(error => setStatus(error.message)));
+  els.collectionInterval.addEventListener('change', resetCollectionTimerIfRunning);
 
-  // PAPER MODE: disable BLE and load paper plots
-  if (PAPER_MODE) {
-    const connectBtn = document.getElementById('bleConnectButton');
-    if (connectBtn) connectBtn.disabled = true;
-
-    // Populate time+freq requested view
-    loadPaperTimeFreq();
-
-    // If user flips to bodeNyquist during paper mode, show magnitude-only fallback
-    if (viewModeEl) {
-      viewModeEl.addEventListener('change', (e) => {
-        if (e.target.value === 'bodeNyquist') loadPaperBodeMagnitudeOnly();
-      });
-    }
+  if (DEMO_MODE) {
+    setStatus('Demo mode ready');
   }
-
-  forceResizeAllCharts();
-};
+});

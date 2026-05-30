@@ -1,246 +1,384 @@
-<!--
-  index.html
-  Main web interface for the Cell Impedance Visualization App
--->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Impedance Visualizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sensor Data Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
-    html, body {
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #1d252d;
+      --muted: #5e6b76;
+      --line: #d6dde3;
+      --button: #0b6fa4;
+      --button-hover: #095d89;
+      --table-head: #eef2f5;
+    }
+
+    body.dark {
+      --bg: #111820;
+      --panel: #18222c;
+      --text: #e8eef3;
+      --muted: #a9b5bf;
+      --line: #34424f;
+      --button: #2f91c5;
+      --button-hover: #47a6d8;
+      --table-head: #22313f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
       margin: 0;
-      padding: 0;
-      height: 100%;
-      font-family: Arial, sans-serif;
-      overflow-x: hidden;
+      color: var(--text);
+      background: var(--bg);
+      font-family: Arial, Helvetica, sans-serif;
     }
 
-    #top-left-logo {
-      position: fixed;
-      top: 10px;
-      left: 10px;
+    button,
+    select {
+      font: inherit;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
       display: flex;
-      gap: 10px;
       align-items: center;
-      z-index: 1000;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
     }
 
-    #top-left-logo img {
-      height: 50px;
-      opacity: 0.9;
+    .logos {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 150px;
+    }
+
+    .logos img {
+      height: 42px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 0.94rem;
+      font-weight: 700;
+    }
+
+    select,
+    button {
+      min-height: 38px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel);
+    }
+
+    button {
+      border-color: var(--button);
+      color: #ffffff;
+      background: var(--button);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button:hover {
+      background: var(--button-hover);
+    }
+
+    .pair-button.paired {
+      border-color: #23784f;
+      background: #23784f;
     }
 
     #themeToggle {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      padding: 8px 12px;
-      background-color: #0077cc;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      font-size: 1.1rem;
-      font-weight: bold;
-      cursor: pointer;
-      z-index: 1000;
+      color: var(--text);
+      border-color: var(--line);
+      background: transparent;
     }
 
-    h1 {
-      margin-top: 70px;
-      font-size: 1.8rem;
-      text-align: center;
-      width: 100%;
+    main {
+      width: min(1280px, calc(100% - 28px));
+      margin: 18px auto 36px;
     }
 
-    #bleConnectWrapper {
-      text-align: center;
-      margin: 10px 0;
-    }
-
-    #bleConnectButton, #toggleCollectButton {
-      padding: 10px 20px;
-      font-size: 1.1rem;
-      font-weight: bold;
-      border: none;
-      border-radius: 6px;
-      background-color: #0077cc;
-      color: white;
-      cursor: pointer;
-      margin: 0 5px;
-    }
-
-    #viewModeWrapper {
-      text-align: center;
-      margin: 10px 0;
-    }
-
-    #viewMode {
-      padding: 8px 12px;
-      font-size: 1rem;
-      border-radius: 6px;
-    }
-
-    .chart-view {
+    .status-row {
       display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 20px;
-      padding: 10px 30px;
-    }
-
-    .chart-block {
-      display: flex;
-      flex-direction: column;
       align-items: center;
-      width: 760px; /* keeps consistent sizing */
-      max-width: 95vw;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.95rem;
     }
 
-    /* CRITICAL: fixed height wrapper prevents Chart.js tiny-chart issue on toggle */
-    .chartWrap {
-      width: 100%;
-      height: 450px;   /* adjust if you want taller/shorter charts */
-      border: 1px solid #aaa;
-      background-color: #fff;
-      border-radius: 4px;
-      overflow: hidden;
+    .view-panel {
+      display: none;
     }
 
-    /* Let canvas fill wrapper. Avoid hardcoding canvas px sizes. */
-    .chartWrap canvas {
+    .view-panel.active {
+      display: block;
+    }
+
+    .plot-panel,
+    .table-panel {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+    }
+
+    .plot-header,
+    .table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .chart-wrap {
+      height: 460px;
+      padding: 14px;
+    }
+
+    .chart-wrap canvas {
       width: 100% !important;
       height: 100% !important;
       display: block;
     }
 
-    #dataTableSection {
-      margin-top: 20px;
-      padding: 0 30px 40px;
-      max-width: 1000px;
-      margin-left: auto;
-      margin-right: auto;
+    .table-panel {
+      margin-top: 14px;
+      overflow: hidden;
     }
 
     .table-scroll {
-      max-height: 26vh;
-      overflow-y: auto;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      margin: 0 auto;
-      width: 100%;
-      background-color: white;
+      max-height: 260px;
+      overflow: auto;
     }
 
-    #liveDataTable {
+    table {
       width: 100%;
+      min-width: 760px;
       border-collapse: collapse;
-      table-layout: auto;
     }
 
-    #liveDataTable th, #liveDataTable td {
-      border: 1px solid #ccc;
-      padding: 8px;
-      text-align: center;
+    th,
+    td {
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
       white-space: nowrap;
     }
 
-    #liveDataTable thead th {
+    th {
       position: sticky;
       top: 0;
-      background-color: #f5f5f5;
-      z-index: 2;
-      box-shadow: 0 2px 2px rgba(0,0,0,0.1);
+      background: var(--table-head);
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      z-index: 1;
+    }
+
+    td {
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 820px) {
+      .topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .controls {
+        justify-content: flex-start;
+      }
+
+      .status-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .chart-wrap {
+        height: 340px;
+      }
     }
   </style>
 </head>
 
 <body>
+  <header class="topbar">
+    <div class="logos" aria-label="Project logos">
+      <img src="Images/NBSS.png" alt="NBSS logo">
+      <img src="Images/UCF.png" alt="UCF logo">
+    </div>
 
-  <!-- Logos -->
-  <div id="top-left-logo">
-    <img src="images/NBSS.png" alt="NBSS Logo">
-    <img src="images/UCF.png" alt="UCF Logo">
-  </div>
+    <div class="controls">
+      <button id="themeToggle" type="button">Dark Mode</button>
 
-  <!-- Theme toggle -->
-  <button id="themeToggle">🌙</button>
+      <div class="control-group">
+        <label for="collectionInterval">Collect every</label>
+        <select id="collectionInterval">
+          <option value="10000">10 sec</option>
+          <option value="30000">30 sec</option>
+          <option value="60000" selected>60 sec</option>
+          <option value="90000">90 sec</option>
+          <option value="120000">120 sec</option>
+        </select>
+      </div>
 
-  <h1>Impedance Visualization</h1>
+      <button id="startCycleButton" type="button">Start Collection Cycle</button>
+      <button id="pairNodeAButton" class="pair-button" type="button">Pair ESP32-A</button>
+      <button id="pairNodeBButton" class="pair-button" type="button">Pair ESP32-B</button>
 
-  <!-- BLE buttons -->
-  <div id="bleConnectWrapper">
-    <button id="bleConnectButton">🔗 Connect to BLE</button>
-    <button id="toggleCollectButton">⏸️ Pause Collection</button>
-  </div>
-
-  <!-- View toggle -->
-  <div id="viewModeWrapper">
-    <label for="viewMode" style="font-weight:bold; margin-right:8px;">View:</label>
-    <select id="viewMode">
-      <option value="bodeNyquist">Bode + Nyquist</option>
-      <option value="timeFreq">|Z| vs Time + |Z| vs Frequency</option>
-    </select>
-  </div>
-
-  <!-- View 1: Bode + Nyquist -->
-  <div id="charts-bodeNyquist" class="chart-view">
-    <div class="chart-block">
-      <h3>Bode Plot</h3>
-      <div class="chartWrap">
-        <canvas id="bodeChart"></canvas>
+      <div class="control-group">
+        <label for="viewMode">View</label>
+        <select id="viewMode">
+          <option value="bode">Bode</option>
+          <option value="nyquist">Nyquist</option>
+          <option value="humidity">Humidity</option>
+        </select>
       </div>
     </div>
+  </header>
 
-    <div class="chart-block">
-      <h3>Nyquist Plot</h3>
-      <div class="chartWrap">
-        <canvas id="nyquistChart"></canvas>
+  <main>
+    <div class="status-row">
+      <h1>Live Sensor Data</h1>
+      <span id="collectionStatus">Collection stopped</span>
+    </div>
+
+    <section id="bodeView" class="view-panel active" aria-labelledby="bodeTitle">
+      <div class="plot-panel">
+        <div class="plot-header">
+          <h2 id="bodeTitle">Bode Plot</h2>
+          <span>|Z| and phase vs frequency</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="bodeChart"></canvas>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <!-- View 2: |Z| vs Time + |Z| vs Frequency -->
-  <div id="charts-timeFreq" class="chart-view" style="display:none;">
-    <div class="chart-block">
-      <h3>|Z| vs Time</h3>
-      <div class="chartWrap">
-        <canvas id="timeChart"></canvas>
+      <div class="table-panel">
+        <div class="table-header">
+          <h2>Bode Data Table</h2>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Device ID</th>
+                <th>Frequency (Hz)</th>
+                <th>Real (Ω)</th>
+                <th>Imag (Ω)</th>
+                <th>|Z| (Ω)</th>
+                <th>Phase (deg)</th>
+              </tr>
+            </thead>
+            <tbody id="bodeTableBody"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="chart-block">
-      <h3>|Z| vs Frequency</h3>
-      <div class="chartWrap">
-        <canvas id="freqChart"></canvas>
+    <section id="nyquistView" class="view-panel" aria-labelledby="nyquistTitle">
+      <div class="plot-panel">
+        <div class="plot-header">
+          <h2 id="nyquistTitle">Nyquist Plot</h2>
+          <span>Imaginary impedance vs real impedance</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="nyquistChart"></canvas>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Live data table -->
-  <div id="dataTableSection">
-    <h2 style="text-align:center;">Live Data Table</h2>
-    <div class="table-scroll">
-      <table id="liveDataTable">
-        <thead>
-          <tr>
-            <th>Timestamp (s)</th>
-            <th>Frequency (Hz)</th>
-            <th>Real (Ω)</th>
-            <th>Imag (Ω)</th>
-            <th>|Z| (Ω)</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
+      <div class="table-panel">
+        <div class="table-header">
+          <h2>Nyquist Data Table</h2>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Device ID</th>
+                <th>Frequency (Hz)</th>
+                <th>Real (Ω)</th>
+                <th>-Imag (Ω)</th>
+                <th>|Z| (Ω)</th>
+                <th>Phase (deg)</th>
+              </tr>
+            </thead>
+            <tbody id="nyquistTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-  <!-- Scripts -->
-  <script src="paper_data.js"></script>
+    <section id="humidityView" class="view-panel" aria-labelledby="humidityTitle">
+      <div class="plot-panel">
+        <div class="plot-header">
+          <h2 id="humidityTitle">Humidity Plot</h2>
+          <span>Humidity vs time when humidity packets are available</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="humidityChart"></canvas>
+        </div>
+      </div>
+
+      <div class="table-panel">
+        <div class="table-header">
+          <h2>Humidity Data Table</h2>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Device ID</th>
+                <th>Humidity (%)</th>
+              </tr>
+            </thead>
+            <tbody id="humidityTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
   <script src="realtime.js"></script>
-
 </body>
 </html>

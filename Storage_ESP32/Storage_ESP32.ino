@@ -1,152 +1,179 @@
+/*
+  Storage_ESP32.ino
+  Single-ESP32 test firmware for the web app.
+
+  The ESP32 advertises one BLE service and one readable characteristic.
+  Every app read returns a fresh simulated JSON packet:
+  {
+    "timestamp": ...,
+    "deviceId": ...,
+    "frequency": ...,
+    "real impedance": ...,
+    "imaginary impedance": ...,
+    "relative humidity %": ...
+  }
+
+  Each packet is also appended to SPIFFS at /sensor_data.jsonl.
+*/
+
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <esp_system.h>
 #include "FS.h"
 #include "SPIFFS.h"
 
-#define SERVICE_UUID           "12345678-1234-1234-1234-1234567890ab"
-#define REQUEST_CHAR_UUID      "12345678-1234-1234-1234-1234567890ac"
-#define RESPONSE_CHAR_UUID     "12345678-1234-1234-1234-1234567890ad"
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-BLECharacteristic* requestChar;
-BLECharacteristic* responseChar;
-BLEServer* pServer;
-
+BLECharacteristic* sensorCharacteristic;
 bool deviceConnected = false;
-String pendingRequest = "";
-bool newRequestReceived = false;
+unsigned long lastSimulationTime = 0;
 
-unsigned long startEpoch = 0;
+const char* DATA_FILE = "/sensor_data.jsonl";
 
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
+const float R_SERIES = 10.0;
+const float R_PARALLEL = 500.0;
+const float CAPACITANCE = 5e-6;
+
+float frequencies[] = {100, 150, 220, 330, 470, 680, 1000, 1500, 2200, 3300, 4700, 6800, 10000};
+const int NUM_FREQUENCIES = sizeof(frequencies) / sizeof(frequencies[0]);
+int frequencyIndex = 0;
+
+String latestPacket = "";
+String deviceId = "";
+String deviceName = "";
+
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer*) override {
     deviceConnected = true;
-    Serial.println("ESP-A connected.");
+    Serial.println("Web app connected.");
   }
 
-  void onDisconnect(BLEServer* pServer) {
+  void onDisconnect(BLEServer*) override {
     deviceConnected = false;
-    Serial.println("ESP-A disconnected.");
+    Serial.println("Web app disconnected. Restarting advertising...");
+    delay(100);
     BLEDevice::startAdvertising();
   }
 };
 
-class RequestCallback : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* characteristic) override {
-    pendingRequest = characteristic->getValue().c_str();
-    newRequestReceived = true;
-    Serial.println("Request received: " + pendingRequest);
+float randomFloat(float minValue, float maxValue) {
+  return minValue + ((float)random(0, 10000) / 10000.0) * (maxValue - minValue);
+}
+
+String buildSimulatedPacket() {
+  unsigned long timestamp = millis();
+  float frequency = frequencies[frequencyIndex];
+  frequencyIndex = (frequencyIndex + 1) % NUM_FREQUENCIES;
+
+  float omega = 2.0 * PI * frequency;
+  float rcTerm = omega * R_PARALLEL * CAPACITANCE;
+  float realParallel = R_PARALLEL / (1.0 + (rcTerm * rcTerm));
+  float imagParallel = -(omega * CAPACITANCE * R_PARALLEL * R_PARALLEL) / (1.0 + (rcTerm * rcTerm));
+
+  float realImpedance = R_SERIES + realParallel + randomFloat(-0.5, 0.5);
+  float imaginaryImpedance = imagParallel + randomFloat(-1.0, 1.0);
+
+  float humidity = 52.0 + 2.0 * sin(timestamp / 60000.0) + randomFloat(-0.25, 0.25);
+
+  String json = "{";
+  json += "\"timestamp\":" + String(timestamp) + ",";
+  json += "\"deviceId\":\"" + deviceId + "\",";
+  json += "\"frequency\":" + String(frequency, 1) + ",";
+  json += "\"real impedance\":" + String(realImpedance, 3) + ",";
+  json += "\"imaginary impedance\":" + String(imaginaryImpedance, 3) + ",";
+  json += "\"relative humidity %\":" + String(humidity, 2);
+  json += "}";
+
+  return json;
+}
+
+void appendPacketToStorage(const String& packet) {
+  File file = SPIFFS.open(DATA_FILE, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open storage file.");
+    return;
+  }
+
+  file.println(packet);
+  file.close();
+}
+
+void generateStoreAndPublishPacket(bool notifyClient) {
+  latestPacket = buildSimulatedPacket();
+  appendPacketToStorage(latestPacket);
+  sensorCharacteristic->setValue(latestPacket.c_str());
+
+  if (notifyClient && deviceConnected) {
+    sensorCharacteristic->notify();
+  }
+
+  Serial.println(latestPacket);
+}
+
+class SensorReadCallbacks : public BLECharacteristicCallbacks {
+  void onRead(BLECharacteristic*) override {
+    sensorCharacteristic->setValue(latestPacket.c_str());
   }
 };
 
 void setupBLE() {
-  BLEDevice::init("ESP-B_Storage");
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  uint64_t chipId = ESP.getEfuseMac();
+  char suffix[7];
+  snprintf(suffix, sizeof(suffix), "%06llX", chipId & 0xFFFFFF);
+  deviceId = "ESP32_" + String(suffix);
+  deviceName = "ESP32_Storage_" + String(suffix);
 
-  BLEService* service = pServer->createService(SERVICE_UUID);
+  BLEDevice::init(deviceName.c_str());
 
-  requestChar = service->createCharacteristic(
-    REQUEST_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE
+  BLEServer* server = BLEDevice::createServer();
+  server->setCallbacks(new ServerCallbacks());
+
+  BLEService* service = server->createService(SERVICE_UUID);
+
+  sensorCharacteristic = service->createCharacteristic(
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
   );
-  requestChar->setCallbacks(new RequestCallback());
+  sensorCharacteristic->addDescriptor(new BLE2902());
+  sensorCharacteristic->setCallbacks(new SensorReadCallbacks());
 
-  responseChar = service->createCharacteristic(
-    RESPONSE_CHAR_UUID,
-    BLECharacteristic::PROPERTY_NOTIFY
-  );
-  responseChar->addDescriptor(new BLE2902());
+  latestPacket = buildSimulatedPacket();
+  sensorCharacteristic->setValue(latestPacket.c_str());
 
   service->start();
-  BLEDevice::startAdvertising();
-  Serial.println("BLE Storage Server started...");
-}
 
-void generateAndStoreData() {
-  unsigned long relativeTime = millis() / 1000;
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(SERVICE_UUID);
+  advertising->setScanResponse(true);
+  advertising->start();
 
-  float freq = 1000.0 + random(-500, 500);  // simulated frequency
-  float R = 700.0 + random(-100, 100);      // real part
-  float X = -1.0 / (2.0 * PI * freq * 1e-6); // imaginary part (capacitive)
-  X += random(-100, 100) / 10.0;
-
-  float mag = sqrt(R * R + X * X);
-  float phase = atan2(X, R) * 180.0 / PI;
-
-  File file = SPIFFS.open("/impedance_data.csv", FILE_APPEND);
-  if (file) {
-    file.printf("%lu,%.1f,%.2f,%.2f,%.2f,%.2f\n", startEpoch + relativeTime, freq, R, X, mag, phase);
-    file.close();
-  }
-}
-
-void sendDataInRange(unsigned long start, unsigned long end) {
-  File file = SPIFFS.open("/impedance_data.csv");
-  if (!file) {
-    Serial.println("Failed to open CSV.");
-    return;
-  }
-
-  while (file.available()) {
-    String line = file.readStringUntil('\n');
-    if (line.length() == 0) continue;
-
-    int commaIdx = line.indexOf(',');
-    if (commaIdx == -1) continue;
-
-    unsigned long timestamp = line.substring(0, commaIdx).toInt();
-    if (timestamp >= (startEpoch + start) && timestamp <= (startEpoch + end)) {
-      responseChar->setValue(line.c_str());
-      responseChar->notify();
-      delay(50);
-    }
-  }
-
-  file.close();
-  Serial.println("Finished sending data in range.");
+  Serial.println("BLE storage simulator advertising as " + deviceName + ".");
+  Serial.println("Packet deviceId: " + deviceId);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
+  randomSeed((uint32_t)esp_random());
 
   if (!SPIFFS.begin(true)) {
-    Serial.println("SPIFFS mount failed!");
+    Serial.println("SPIFFS mount failed.");
     return;
   }
 
-  // TEMP: hard-code a start epoch so we don’t need Serial Monitor
-  startEpoch = 1760000000;  // any reasonable test value in seconds
-  Serial.printf("Start epoch time set to: %lu\n", startEpoch);
-
   setupBLE();
-}  // <--- this closing brace was missing
+}
 
 void loop() {
-  static unsigned long lastDataTime = 0;
-  if (millis() - lastDataTime > 10000) {
-    generateAndStoreData();
-    lastDataTime = millis();
-  }
+  unsigned long now = millis();
 
-  if (deviceConnected && newRequestReceived) {
-    newRequestReceived = false;
-
-    int commaIdx = pendingRequest.indexOf(',');
-    if (commaIdx == -1) {
-      Serial.println("Malformed request.");
-      return;
-    }
-
-    unsigned long startRel = pendingRequest.substring(0, commaIdx).toInt();
-    unsigned long endRel = pendingRequest.substring(commaIdx + 1).toInt();
-
-    Serial.printf("Requesting range: %lus to %lus\n", startRel, endRel);
-    sendDataInRange(startRel, endRel);
+  if (now - lastSimulationTime >= 1000) {
+    lastSimulationTime = now;
+    generateStoreAndPublishPacket(true);
   }
 
   delay(100);
 }
-
