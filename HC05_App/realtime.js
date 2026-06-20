@@ -103,6 +103,18 @@ async function readStoredRecords() {
   });
 }
 
+async function clearStoredRecords() {
+  const database = await databasePromise;
+  if (!database) return;
+
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(DATABASE_STORE, 'readwrite');
+    transaction.objectStore(DATABASE_STORE).clear();
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
 function numberFrom(data, keys) {
   for (const key of keys) {
     const value = data[key];
@@ -456,6 +468,27 @@ async function restoreStoredData() {
   }
 }
 
+async function clearAllData() {
+  const confirmed = window.confirm(
+    'Clear all stored sensor data? This cannot be undone unless you downloaded a CSV.'
+  );
+  if (!confirmed) return;
+
+  stopCollectionCycle();
+  await clearStoredRecords();
+
+  impedanceRows.length = 0;
+  humidityRows.length = 0;
+  csvRecords.length = 0;
+  Object.values(nodes).forEach(node => {
+    node.lastCollectedKey = null;
+  });
+
+  updateImpedanceViews();
+  updateHumidityView();
+  setStatus('All stored sensor data was cleared. Collection stopped.');
+}
+
 function slotForIndex(index) {
   return String.fromCharCode(65 + index);
 }
@@ -765,6 +798,11 @@ window.addEventListener('load', () => {
   });
   document.querySelectorAll('[data-import-csv]').forEach(button => {
     button.addEventListener('click', () => els.csvFileInput.click());
+  });
+  document.querySelectorAll('[data-clear-data]').forEach(button => {
+    button.addEventListener('click', () => {
+      clearAllData().catch(error => setStatus(`Data could not be cleared: ${error.message}`));
+    });
   });
   els.csvFileInput.addEventListener('change', async event => {
     const file = event.target.files[0];
