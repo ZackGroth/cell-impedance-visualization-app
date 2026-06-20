@@ -6,10 +6,18 @@
 
 const SERIAL_BAUD_RATE = 9600;
 const DEMO_MODE = false;
-const DEVICE_COLORS = {
-  HC05_A: { primary: '#36a2eb', secondary: '#ff6384' },
-  HC05_B: { primary: '#4bc0c0', secondary: '#ff9f40' }
-};
+const DEVICE_PALETTES = [
+  { primary: '#36a2eb', secondary: '#ff6384' },
+  { primary: '#4bc0c0', secondary: '#ff9f40' },
+  { primary: '#9966ff', secondary: '#c9cbcf' },
+  { primary: '#2e8b57', secondary: '#d45087' },
+  { primary: '#7f6d00', secondary: '#dc3912' },
+  { primary: '#3366cc', secondary: '#109618' },
+  { primary: '#990099', secondary: '#0099c6' },
+  { primary: '#dd4477', secondary: '#66aa00' },
+  { primary: '#b82e2e', secondary: '#316395' },
+  { primary: '#994499', secondary: '#22aa99' }
+];
 const DATABASE_NAME = 'sensor-monitor-hc05';
 const DATABASE_STORE = 'packets';
 const CSV_HEADERS = [
@@ -31,22 +39,13 @@ const databasePromise = openPacketDatabase().catch(error => {
   return null;
 });
 
-const nodes = {
-  A: {
-    label: 'HC-05 A', deviceId: 'HC05_A', port: null, latestPacket: null, buffer: '', reader: null,
-    receivedCount: 0, lastCollectedKey: null
-  },
-  B: {
-    label: 'HC-05 B', deviceId: 'HC05_B', port: null, latestPacket: null, buffer: '', reader: null,
-    receivedCount: 0, lastCollectedKey: null
-  }
-};
+const nodes = {};
 
 const els = {
   themeToggle: document.getElementById('themeToggle'),
   startCycleButton: document.getElementById('startCycleButton'),
-  pairNodeAButton: document.getElementById('pairNodeAButton'),
-  pairNodeBButton: document.getElementById('pairNodeBButton'),
+  deviceCount: document.getElementById('deviceCount'),
+  pairButtons: document.getElementById('pairButtons'),
   collectionInterval: document.getElementById('collectionInterval'),
   viewMode: document.getElementById('viewMode'),
   collectionStatus: document.getElementById('collectionStatus'),
@@ -177,10 +176,11 @@ function trimRows(rows, maxRows = 200) {
 }
 
 function colorsForDevice(deviceId) {
-  return DEVICE_COLORS[deviceId] || {
-    primary: '#9966ff',
-    secondary: '#c9cbcf'
-  };
+  const configuredNode = Object.values(nodes).find(node => node.deviceId === deviceId);
+  if (configuredNode) return DEVICE_PALETTES[configuredNode.index % DEVICE_PALETTES.length];
+
+  const hash = [...deviceId].reduce((total, character) => total + character.charCodeAt(0), 0);
+  return DEVICE_PALETTES[hash % DEVICE_PALETTES.length];
 }
 
 function addPacket(data, fallbackDeviceId, options = {}) {
@@ -456,6 +456,62 @@ async function restoreStoredData() {
   }
 }
 
+function slotForIndex(index) {
+  return String.fromCharCode(65 + index);
+}
+
+function createNode(slot, index) {
+  return {
+    slot,
+    index,
+    label: `HC-05 ${slot}`,
+    deviceId: `HC05_${slot}`,
+    port: null,
+    latestPacket: null,
+    buffer: '',
+    reader: null,
+    receivedCount: 0,
+    lastCollectedKey: null
+  };
+}
+
+function renderPairButtons() {
+  els.pairButtons.replaceChildren();
+
+  Object.values(nodes).forEach(node => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pair-button';
+    button.dataset.pairSlot = node.slot;
+    button.textContent = node.port ? `${node.label} Paired` : `Pair ${node.label}`;
+    button.disabled = Boolean(node.port);
+    if (node.port) button.classList.add('paired');
+    button.addEventListener('click', () => {
+      pairNode(node.slot).catch(error => setStatus(error.message));
+    });
+    els.pairButtons.appendChild(button);
+  });
+}
+
+function configureDeviceCount(count) {
+  const requestedSlots = Array.from({ length: count }, (_, index) => slotForIndex(index));
+  const removedSlots = Object.keys(nodes).filter(slot => !requestedSlots.includes(slot));
+
+  if (removedSlots.some(slot => nodes[slot].port)) {
+    els.deviceCount.value = String(Object.keys(nodes).length);
+    setStatus('A paired device cannot be removed. Reload the page to reset paired ports.');
+    return;
+  }
+
+  removedSlots.forEach(slot => delete nodes[slot]);
+  requestedSlots.forEach((slot, index) => {
+    if (!nodes[slot]) nodes[slot] = createNode(slot, index);
+  });
+
+  renderPairButtons();
+  setStatus(`Configured ${count} HC-05 device slot(s).`);
+}
+
 async function pairNode(slot) {
   if (!navigator.serial) {
     throw new Error('Web Serial is not available in this browser.');
@@ -467,9 +523,7 @@ async function pairNode(slot) {
   nodes[slot].port = port;
   startSerialReader(slot);
 
-  const button = slot === 'A' ? els.pairNodeAButton : els.pairNodeBButton;
-  button.textContent = `${nodes[slot].label} Paired`;
-  button.classList.add('paired');
+  renderPairButtons();
   setStatus(`${nodes[slot].label} serial port opened at ${SERIAL_BAUD_RATE} baud`);
 }
 
@@ -549,7 +603,7 @@ async function collectOnce() {
 
     const pairedSlots = Object.keys(nodes).filter(slot => nodes[slot].port);
     if (pairedSlots.length === 0) {
-      throw new Error('Pair HC-05 A or HC-05 B before starting collection.');
+      throw new Error('Pair at least one HC-05 device before starting collection.');
     }
 
     let collectedCount = 0;
@@ -691,6 +745,7 @@ function initCharts() {
 window.addEventListener('load', () => {
   initCharts();
   setView(els.viewMode.value);
+  configureDeviceCount(Number(els.deviceCount.value));
 
   els.themeToggle.addEventListener('click', () => {
     document.body.classList.toggle('dark');
@@ -701,8 +756,9 @@ window.addEventListener('load', () => {
 
   els.viewMode.addEventListener('change', event => setView(event.target.value));
   els.startCycleButton.addEventListener('click', toggleCollectionCycle);
-  els.pairNodeAButton.addEventListener('click', () => pairNode('A').catch(error => setStatus(error.message)));
-  els.pairNodeBButton.addEventListener('click', () => pairNode('B').catch(error => setStatus(error.message)));
+  els.deviceCount.addEventListener('change', event => {
+    configureDeviceCount(Number(event.target.value));
+  });
   els.collectionInterval.addEventListener('change', resetCollectionTimerIfRunning);
   document.querySelectorAll('[data-download-csv]').forEach(button => {
     button.addEventListener('click', downloadCsv);

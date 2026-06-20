@@ -7,6 +7,18 @@
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 const DEMO_MODE = false;
+const DEVICE_PALETTES = [
+  { primary: '#36a2eb', secondary: '#ff6384' },
+  { primary: '#4bc0c0', secondary: '#ff9f40' },
+  { primary: '#9966ff', secondary: '#c9cbcf' },
+  { primary: '#2e8b57', secondary: '#d45087' },
+  { primary: '#7f6d00', secondary: '#dc3912' },
+  { primary: '#3366cc', secondary: '#109618' },
+  { primary: '#990099', secondary: '#0099c6' },
+  { primary: '#dd4477', secondary: '#66aa00' },
+  { primary: '#b82e2e', secondary: '#316395' },
+  { primary: '#994499', secondary: '#22aa99' }
+];
 const DATABASE_NAME = 'sensor-monitor-esp32';
 const DATABASE_STORE = 'packets';
 const CSV_HEADERS = [
@@ -28,16 +40,13 @@ const databasePromise = openPacketDatabase().catch(error => {
   return null;
 });
 
-const nodes = {
-  A: { label: 'ESP32-A', device: null },
-  B: { label: 'ESP32-B', device: null }
-};
+const nodes = {};
 
 const els = {
   themeToggle: document.getElementById('themeToggle'),
   startCycleButton: document.getElementById('startCycleButton'),
-  pairNodeAButton: document.getElementById('pairNodeAButton'),
-  pairNodeBButton: document.getElementById('pairNodeBButton'),
+  deviceCount: document.getElementById('deviceCount'),
+  pairButtons: document.getElementById('pairButtons'),
   collectionInterval: document.getElementById('collectionInterval'),
   viewMode: document.getElementById('viewMode'),
   collectionStatus: document.getElementById('collectionStatus'),
@@ -167,6 +176,11 @@ function trimRows(rows, maxRows = 200) {
   while (rows.length > maxRows) rows.shift();
 }
 
+function colorsForDevice(deviceId) {
+  const hash = [...deviceId].reduce((total, character) => total + character.charCodeAt(0), 0);
+  return DEVICE_PALETTES[hash % DEVICE_PALETTES.length];
+}
+
 function addPacket(data, fallbackDeviceId, options = {}) {
   const { persist = true, refresh = true } = options;
   const impedance = normalizeImpedancePacket(data, fallbackDeviceId);
@@ -212,11 +226,14 @@ function updateImpedanceViews() {
 
   bodeChart.data.datasets = deviceIds.flatMap(deviceId => {
     const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return [
       {
         label: `${deviceId} |Z| (dB)`,
         yAxisID: 'magnitudeAxis',
         data: rows.map(row => ({ x: row.frequency, y: row.magnitudeDb })),
+        borderColor: colors.primary,
+        backgroundColor: colors.primary,
         pointRadius: 3,
         borderWidth: 2
       },
@@ -224,6 +241,8 @@ function updateImpedanceViews() {
         label: `${deviceId} Phase (deg)`,
         yAxisID: 'phaseAxis',
         data: rows.map(row => ({ x: row.frequency, y: row.phase })),
+        borderColor: colors.secondary,
+        backgroundColor: colors.secondary,
         pointRadius: 3,
         borderWidth: 2,
         borderDash: [5, 4]
@@ -234,9 +253,12 @@ function updateImpedanceViews() {
 
   nyquistChart.data.datasets = deviceIds.map(deviceId => {
     const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return {
       label: deviceId,
       data: rows.map(row => ({ x: row.real, y: -row.imag })),
+      borderColor: colors.primary,
+      backgroundColor: colors.primary,
       pointRadius: 4,
       borderWidth: 2,
       tension: 0.2
@@ -251,9 +273,12 @@ function updateHumidityView() {
   const deviceIds = [...new Set(humidityRows.map(row => row.deviceId))];
   humidityChart.data.datasets = deviceIds.map(deviceId => {
     const rows = humidityRows.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return {
       label: `${deviceId} humidity (%)`,
       data: rows.map(row => ({ x: row.timeSec, y: row.humidity })),
+      borderColor: colors.primary,
+      backgroundColor: colors.primary,
       pointRadius: 3,
       borderWidth: 2
     };
@@ -429,6 +454,56 @@ async function restoreStoredData() {
   }
 }
 
+function slotForIndex(index) {
+  return String.fromCharCode(65 + index);
+}
+
+function createNode(slot, index) {
+  return {
+    slot,
+    index,
+    label: `ESP32-${slot}`,
+    device: null
+  };
+}
+
+function renderPairButtons() {
+  els.pairButtons.replaceChildren();
+
+  Object.values(nodes).forEach(node => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pair-button';
+    button.dataset.pairSlot = node.slot;
+    button.textContent = node.device ? `${node.label} Paired` : `Pair ${node.label}`;
+    button.disabled = Boolean(node.device);
+    if (node.device) button.classList.add('paired');
+    button.addEventListener('click', () => {
+      pairNode(node.slot).catch(error => setStatus(error.message));
+    });
+    els.pairButtons.appendChild(button);
+  });
+}
+
+function configureDeviceCount(count) {
+  const requestedSlots = Array.from({ length: count }, (_, index) => slotForIndex(index));
+  const removedSlots = Object.keys(nodes).filter(slot => !requestedSlots.includes(slot));
+
+  if (removedSlots.some(slot => nodes[slot].device)) {
+    els.deviceCount.value = String(Object.keys(nodes).length);
+    setStatus('A paired device cannot be removed. Reload the page to reset paired devices.');
+    return;
+  }
+
+  removedSlots.forEach(slot => delete nodes[slot]);
+  requestedSlots.forEach((slot, index) => {
+    if (!nodes[slot]) nodes[slot] = createNode(slot, index);
+  });
+
+  renderPairButtons();
+  setStatus(`Configured ${count} ESP32 device slot(s).`);
+}
+
 async function pairNode(slot) {
   if (!navigator.bluetooth) {
     throw new Error('Web Bluetooth is not available in this browser.');
@@ -439,9 +514,7 @@ async function pairNode(slot) {
   });
 
   nodes[slot].device = device;
-  const button = slot === 'A' ? els.pairNodeAButton : els.pairNodeBButton;
-  button.textContent = `${nodes[slot].label} Paired`;
-  button.classList.add('paired');
+  renderPairButtons();
   setStatus(`${nodes[slot].label} paired: ${device.name || device.id}`);
 }
 
@@ -493,7 +566,7 @@ async function collectOnce() {
 
     const pairedSlots = Object.keys(nodes).filter(slot => nodes[slot].device);
     if (pairedSlots.length === 0) {
-      throw new Error('Pair ESP32-A or ESP32-B before starting collection.');
+      throw new Error('Pair at least one ESP32 device before starting collection.');
     }
 
     for (const slot of pairedSlots) {
@@ -616,6 +689,7 @@ function initCharts() {
 window.addEventListener('load', () => {
   initCharts();
   setView(els.viewMode.value);
+  configureDeviceCount(Number(els.deviceCount.value));
 
   els.themeToggle.addEventListener('click', () => {
     document.body.classList.toggle('dark');
@@ -626,8 +700,9 @@ window.addEventListener('load', () => {
 
   els.viewMode.addEventListener('change', event => setView(event.target.value));
   els.startCycleButton.addEventListener('click', toggleCollectionCycle);
-  els.pairNodeAButton.addEventListener('click', () => pairNode('A').catch(error => setStatus(error.message)));
-  els.pairNodeBButton.addEventListener('click', () => pairNode('B').catch(error => setStatus(error.message)));
+  els.deviceCount.addEventListener('change', event => {
+    configureDeviceCount(Number(event.target.value));
+  });
   els.collectionInterval.addEventListener('change', resetCollectionTimerIfRunning);
   document.querySelectorAll('[data-download-csv]').forEach(button => {
     button.addEventListener('click', downloadCsv);
