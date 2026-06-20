@@ -6,6 +6,16 @@
 
 const SERIAL_BAUD_RATE = 9600;
 const DEMO_MODE = false;
+const DEVICE_COLORS = {
+  HC05_A: { primary: '#36a2eb', secondary: '#ff6384' },
+  HC05_B: { primary: '#4bc0c0', secondary: '#ff9f40' }
+};
+const DATABASE_NAME = 'sensor-monitor-hc05';
+const DATABASE_STORE = 'packets';
+const CSV_HEADERS = [
+  'timestamp', 'deviceId', 'frequency', 'realImpedance',
+  'imaginaryImpedance', 'magnitude', 'phase', 'relativeHumidity'
+];
 
 let bodeChart;
 let nyquistChart;
@@ -15,14 +25,19 @@ let collecting = false;
 
 const impedanceRows = [];
 const humidityRows = [];
+const csvRecords = [];
+const databasePromise = openPacketDatabase().catch(error => {
+  console.warn('Persistent browser storage is unavailable:', error);
+  return null;
+});
 
 const nodes = {
   A: {
-    label: 'HC-05 A', port: null, latestPacket: null, buffer: '', reader: null,
+    label: 'HC-05 A', deviceId: 'HC05_A', port: null, latestPacket: null, buffer: '', reader: null,
     receivedCount: 0, lastCollectedKey: null
   },
   B: {
-    label: 'HC-05 B', port: null, latestPacket: null, buffer: '', reader: null,
+    label: 'HC-05 B', deviceId: 'HC05_B', port: null, latestPacket: null, buffer: '', reader: null,
     receivedCount: 0, lastCollectedKey: null
   }
 };
@@ -40,8 +55,54 @@ const els = {
   humidityView: document.getElementById('humidityView'),
   bodeTableBody: document.getElementById('bodeTableBody'),
   nyquistTableBody: document.getElementById('nyquistTableBody'),
-  humidityTableBody: document.getElementById('humidityTableBody')
+  humidityTableBody: document.getElementById('humidityTableBody'),
+  csvFileInput: document.getElementById('csvFileInput')
 };
+
+function openPacketDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error('IndexedDB is not supported.'));
+      return;
+    }
+
+    const request = indexedDB.open(DATABASE_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(DATABASE_STORE, {
+        keyPath: 'storageId',
+        autoIncrement: true
+      });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function persistRecords(records) {
+  if (records.length === 0) return;
+  const database = await databasePromise;
+  if (!database) return;
+
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(DATABASE_STORE, 'readwrite');
+    const store = transaction.objectStore(DATABASE_STORE);
+    records.forEach(record => store.add(record));
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function readStoredRecords() {
+  const database = await databasePromise;
+  if (!database) return [];
+
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(DATABASE_STORE, 'readonly');
+    const request = transaction.objectStore(DATABASE_STORE).getAll();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
 
 function numberFrom(data, keys) {
   for (const key of keys) {
@@ -115,24 +176,50 @@ function trimRows(rows, maxRows = 200) {
   while (rows.length > maxRows) rows.shift();
 }
 
-function addPacket(data, fallbackDeviceId) {
+function colorsForDevice(deviceId) {
+  return DEVICE_COLORS[deviceId] || {
+    primary: '#9966ff',
+    secondary: '#c9cbcf'
+  };
+}
+
+function addPacket(data, fallbackDeviceId, options = {}) {
+  const { persist = true, refresh = true } = options;
   const impedance = normalizeImpedancePacket(data, fallbackDeviceId);
   if (impedance) {
     impedanceRows.push(impedance);
     trimRows(impedanceRows);
-    updateImpedanceViews();
   }
 
   const humidity = normalizeHumidityPacket(data, fallbackDeviceId);
   if (humidity) {
     humidityRows.push(humidity);
     trimRows(humidityRows);
-    updateHumidityView();
   }
 
   if (!impedance && !humidity) {
     console.warn('Packet did not include supported data fields:', data);
+    return null;
   }
+
+  const record = {
+    timestamp: impedance?.timestamp ?? humidity.timestamp,
+    deviceId: impedance?.deviceId ?? humidity.deviceId,
+    frequency: impedance?.frequency ?? null,
+    realImpedance: impedance?.real ?? null,
+    imaginaryImpedance: impedance?.imag ?? null,
+    magnitude: impedance?.magnitude ?? null,
+    phase: impedance?.phase ?? null,
+    relativeHumidity: humidity?.humidity ?? null
+  };
+
+  csvRecords.push(record);
+  if (persist) persistRecords([record]).catch(error => console.error(error));
+
+  if (refresh && impedance) updateImpedanceViews();
+  if (refresh && humidity) updateHumidityView();
+
+  return record;
 }
 
 function updateImpedanceViews() {
@@ -141,11 +228,14 @@ function updateImpedanceViews() {
 
   bodeChart.data.datasets = deviceIds.flatMap(deviceId => {
     const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return [
       {
         label: `${deviceId} |Z| (dB)`,
         yAxisID: 'magnitudeAxis',
         data: rows.map(row => ({ x: row.frequency, y: row.magnitudeDb })),
+        borderColor: colors.primary,
+        backgroundColor: colors.primary,
         pointRadius: 3,
         borderWidth: 2
       },
@@ -153,6 +243,8 @@ function updateImpedanceViews() {
         label: `${deviceId} Phase (deg)`,
         yAxisID: 'phaseAxis',
         data: rows.map(row => ({ x: row.frequency, y: row.phase })),
+        borderColor: colors.secondary,
+        backgroundColor: colors.secondary,
         pointRadius: 3,
         borderWidth: 2,
         borderDash: [5, 4]
@@ -163,9 +255,12 @@ function updateImpedanceViews() {
 
   nyquistChart.data.datasets = deviceIds.map(deviceId => {
     const rows = sortedByFrequency.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return {
       label: deviceId,
       data: rows.map(row => ({ x: row.real, y: -row.imag })),
+      borderColor: colors.primary,
+      backgroundColor: colors.primary,
       pointRadius: 4,
       borderWidth: 2,
       tension: 0.2
@@ -180,9 +275,12 @@ function updateHumidityView() {
   const deviceIds = [...new Set(humidityRows.map(row => row.deviceId))];
   humidityChart.data.datasets = deviceIds.map(deviceId => {
     const rows = humidityRows.filter(row => row.deviceId === deviceId);
+    const colors = colorsForDevice(deviceId);
     return {
       label: `${deviceId} humidity (%)`,
       data: rows.map(row => ({ x: row.timeSec, y: row.humidity })),
+      borderColor: colors.primary,
+      backgroundColor: colors.primary,
       pointRadius: 3,
       borderWidth: 2
     };
@@ -251,6 +349,113 @@ function setStatus(message) {
   els.collectionStatus.textContent = message;
 }
 
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function buildCsv(records) {
+  const lines = [CSV_HEADERS.join(',')];
+  records.forEach(record => {
+    lines.push(CSV_HEADERS.map(header => escapeCsvValue(record[header])).join(','));
+  });
+  return lines.join('\r\n');
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === ',' && !quoted) {
+      row.push(field);
+      field = '';
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && text[index + 1] === '\n') index += 1;
+      row.push(field);
+      if (row.some(value => value.trim() !== '')) rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += character;
+    }
+  }
+
+  row.push(field);
+  if (row.some(value => value.trim() !== '')) rows.push(row);
+  if (rows.length < 2) return [];
+
+  const headers = rows.shift().map(header => header.trim().replace(/^\uFEFF/, ''));
+  return rows.map(values => Object.fromEntries(
+    headers.map((header, index) => [header, values[index] ?? ''])
+  ));
+}
+
+function downloadCsv() {
+  if (csvRecords.length === 0) {
+    setStatus('There is no collected data to download.');
+    return;
+  }
+
+  const blob = new Blob([buildCsv(csvRecords)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
+  link.href = url;
+  link.download = `sensor-data-${timestamp}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  setStatus(`Downloaded ${csvRecords.length} stored records.`);
+}
+
+async function importCsv(file) {
+  const rows = parseCsv(await file.text());
+  const importedRecords = [];
+
+  rows.forEach(row => {
+    const deviceId = stringFrom(row, ['deviceId', 'deviceID', 'id'], 'IMPORTED');
+    const record = addPacket(row, deviceId, { persist: false, refresh: false });
+    if (record) importedRecords.push(record);
+  });
+
+  if (importedRecords.length === 0) {
+    throw new Error('The CSV did not contain supported sensor rows.');
+  }
+
+  await persistRecords(importedRecords);
+  updateImpedanceViews();
+  updateHumidityView();
+  setStatus(`Imported ${importedRecords.length} CSV records.`);
+}
+
+async function restoreStoredData() {
+  const records = await readStoredRecords();
+  records.forEach(record => {
+    addPacket(record, record.deviceId || 'RESTORED', {
+      persist: false,
+      refresh: false
+    });
+  });
+
+  if (records.length > 0) {
+    updateImpedanceViews();
+    updateHumidityView();
+    setStatus(`Restored ${records.length} stored records.`);
+  }
+}
+
 async function pairNode(slot) {
   if (!navigator.serial) {
     throw new Error('Web Serial is not available in this browser.');
@@ -291,12 +496,15 @@ async function startSerialReader(slot) {
           node.receivedCount += 1;
 
           if (!collecting) {
-            const deviceId = stringFrom(
+            const reportedDeviceId = stringFrom(
               node.latestPacket,
               ['deviceId', 'deviceID', 'id'],
-              node.label
+              'not provided'
             );
-            setStatus(`${node.label} receiving ${deviceId}: ${node.receivedCount} packets`);
+            setStatus(
+              `${node.label} receiving as ${node.deviceId}`
+              + ` (payload: ${reportedDeviceId}, ${node.receivedCount} packets)`
+            );
           }
         } catch (error) {
           console.warn(`Invalid JSON from ${node.label}:`, packetText);
@@ -349,16 +557,14 @@ async function collectOnce() {
     for (const slot of pairedSlots) {
       const node = nodes[slot];
       if (node.latestPacket) {
-        const deviceId = stringFrom(
-          node.latestPacket,
-          ['deviceId', 'deviceID', 'id'],
-          node.label
-        );
         const timestamp = numberFrom(node.latestPacket, ['timestamp', 'time', 't']);
-        const packetKey = `${deviceId}:${timestamp}`;
+        const packetKey = `${node.deviceId}:${timestamp}`;
 
         if (packetKey !== node.lastCollectedKey) {
-          addPacket({ ...node.latestPacket }, node.label);
+          addPacket(
+            { ...node.latestPacket, deviceId: node.deviceId },
+            node.deviceId
+          );
           node.lastCollectedKey = packetKey;
           collectedCount += 1;
         }
@@ -498,6 +704,29 @@ window.addEventListener('load', () => {
   els.pairNodeAButton.addEventListener('click', () => pairNode('A').catch(error => setStatus(error.message)));
   els.pairNodeBButton.addEventListener('click', () => pairNode('B').catch(error => setStatus(error.message)));
   els.collectionInterval.addEventListener('change', resetCollectionTimerIfRunning);
+  document.querySelectorAll('[data-download-csv]').forEach(button => {
+    button.addEventListener('click', downloadCsv);
+  });
+  document.querySelectorAll('[data-import-csv]').forEach(button => {
+    button.addEventListener('click', () => els.csvFileInput.click());
+  });
+  els.csvFileInput.addEventListener('change', async event => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+      await importCsv(file);
+    } catch (error) {
+      setStatus(`CSV import failed: ${error.message}`);
+    } finally {
+      event.target.value = '';
+    }
+  });
+
+  restoreStoredData().catch(error => {
+    console.error(error);
+    setStatus(`Stored data could not be restored: ${error.message}`);
+  });
 
   if (DEMO_MODE) {
     setStatus('Demo mode ready');

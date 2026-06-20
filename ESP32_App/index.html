@@ -161,6 +161,18 @@
       border-bottom: 1px solid var(--line);
     }
 
+    .data-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .data-actions button {
+      min-height: 34px;
+      padding: 6px 10px;
+      font-size: 0.88rem;
+    }
+
     h1,
     h2 {
       margin: 0;
@@ -294,6 +306,10 @@
       <div class="table-panel">
         <div class="table-header">
           <h2>Bode Data Table</h2>
+          <div class="data-actions">
+            <button type="button" data-import-csv>Import CSV</button>
+            <button type="button" data-download-csv>Download CSV</button>
+          </div>
         </div>
         <div class="table-scroll">
           <table>
@@ -328,6 +344,10 @@
       <div class="table-panel">
         <div class="table-header">
           <h2>Nyquist Data Table</h2>
+          <div class="data-actions">
+            <button type="button" data-import-csv>Import CSV</button>
+            <button type="button" data-download-csv>Download CSV</button>
+          </div>
         </div>
         <div class="table-scroll">
           <table>
@@ -362,6 +382,10 @@
       <div class="table-panel">
         <div class="table-header">
           <h2>Humidity Data Table</h2>
+          <div class="data-actions">
+            <button type="button" data-import-csv>Import CSV</button>
+            <button type="button" data-download-csv>Download CSV</button>
+          </div>
         </div>
         <div class="table-scroll">
           <table>
@@ -378,6 +402,8 @@
       </div>
     </section>
   </main>
+
+  <input id="csvFileInput" type="file" accept=".csv,text/csv" hidden>
 
   <script src="realtime.js"></script>
 </body>
