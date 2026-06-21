@@ -33,9 +33,42 @@ const int HC05_RX_PIN = 16;
 const int HC05_TX_PIN = 17;
 
 const unsigned long SEND_INTERVAL_MS = 1000;
-const char* DEVICE_ID = "HC05_A";
+const char* DEVICE_ID = "HC05_vitro";
+const char* HC05_BLUETOOTH_NAME = "HC05_vitro";
+
+// Enable only for a one-time rename while the HC-05 is booted in AT mode.
+// After it reports OK, set this back to false and upload the sketch again.
+const bool CONFIGURE_HC05_NAME = false;
 
 unsigned long lastSendTime = 0;
+
+void printHC05Response(unsigned long timeoutMs = 2000) {
+  unsigned long startTime = millis();
+  while (millis() - startTime < timeoutMs) {
+    while (HC05.available()) {
+      Serial.write(HC05.read());
+    }
+  }
+  Serial.println();
+}
+
+void configureHC05BluetoothName() {
+  // Full HC-05 AT mode normally uses 38400 baud. Hold the module's button/KEY
+  // pin high while powering it on before uploading with configuration enabled.
+  HC05.begin(38400, SERIAL_8N1, HC05_RX_PIN, HC05_TX_PIN);
+  delay(1000);
+
+  Serial.println("Testing HC-05 AT mode...");
+  HC05.print("AT\r\n");
+  printHC05Response();
+
+  Serial.println("Setting Bluetooth name to " + String(HC05_BLUETOOTH_NAME) + "...");
+  HC05.print("AT+NAME=" + String(HC05_BLUETOOTH_NAME) + "\r\n");
+  printHC05Response();
+
+  Serial.println("Configuration finished. Set CONFIGURE_HC05_NAME back to false,");
+  Serial.println("restart the HC-05 normally, and upload this sketch again.");
+}
 
 String buildSensorPacket(
   unsigned long timestamp,
@@ -57,6 +90,11 @@ String buildSensorPacket(
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  if (CONFIGURE_HC05_NAME) {
+    configureHC05BluetoothName();
+    while (true) delay(1000);
+  }
 
   Wire.begin(SHT40_SDA_PIN, SHT40_SCL_PIN);
   HC05.begin(9600, SERIAL_8N1, HC05_RX_PIN, HC05_TX_PIN);
