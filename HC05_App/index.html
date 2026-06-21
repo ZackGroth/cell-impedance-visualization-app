@@ -41,6 +41,7 @@
     }
 
     button,
+    input,
     select {
       font: inherit;
     }
@@ -83,6 +84,25 @@
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+    }
+
+    .device-pair-control {
+      display: flex;
+      gap: 4px;
+    }
+
+    .device-name-input {
+      width: 120px;
+      min-height: 38px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel);
+    }
+
+    .device-name-input:disabled {
+      opacity: 0.75;
     }
 
     .control-group {
@@ -344,7 +364,7 @@
             <thead>
               <tr>
                 <th>Timestamp</th>
-                <th>Device ID</th>
+                <th>Device Name</th>
                 <th>Frequency (Hz)</th>
                 <th>Real (Ω)</th>
                 <th>Imag (Ω)</th>
@@ -383,7 +403,7 @@
             <thead>
               <tr>
                 <th>Timestamp</th>
-                <th>Device ID</th>
+                <th>Device Name</th>
                 <th>Frequency (Hz)</th>
                 <th>Real (Ω)</th>
                 <th>-Imag (Ω)</th>
@@ -401,7 +421,7 @@
       <div class="plot-panel">
         <div class="plot-header">
           <h2 id="humidityTitle">Humidity Plot</h2>
-          <span>Humidity vs time when humidity packets are available</span>
+          <span>Humidity vs time</span>
         </div>
         <div class="chart-wrap">
           <canvas id="humidityChart"></canvas>
@@ -422,7 +442,7 @@
             <thead>
               <tr>
                 <th>Timestamp</th>
-                <th>Device ID</th>
+                <th>Device Name</th>
                 <th>Humidity (%)</th>
               </tr>
             </thead>

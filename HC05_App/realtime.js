@@ -34,6 +34,7 @@ let collecting = false;
 const impedanceRows = [];
 const humidityRows = [];
 const csvRecords = [];
+const initialTimestampByDevice = new Map();
 const databasePromise = openPacketDatabase().catch(error => {
   console.warn('Persistent browser storage is unavailable:', error);
   return null;
@@ -134,24 +135,34 @@ function stringFrom(data, keys, fallback = '') {
   return fallback;
 }
 
+function elapsedTimestamp(timestamp, deviceId) {
+  if (!initialTimestampByDevice.has(deviceId)) {
+    initialTimestampByDevice.set(deviceId, timestamp);
+  }
+
+  return timestamp - initialTimestampByDevice.get(deviceId);
+}
+
 function normalizeImpedancePacket(data, fallbackDeviceId = 'ESP32') {
-  const timestamp = numberFrom(data, ['timestamp', 'time', 't']);
+  const sourceTimestamp = numberFrom(data, ['sourceTimestamp', 'timestamp', 'time', 't']);
   const frequency = numberFrom(data, ['frequency', 'freq', 'frequencyHz']);
   const real = numberFrom(data, ['real', 'realImpedance', 'real impedance']);
   const imag = numberFrom(data, ['imag', 'imaginary', 'imaginaryImpedance', 'imaginary impedance']);
   const deviceId = stringFrom(data, ['deviceId', 'deviceID', 'id'], fallbackDeviceId);
 
-  if (timestamp === null || frequency === null || real === null || imag === null) {
+  if (sourceTimestamp === null || frequency === null || real === null || imag === null) {
     return null;
   }
 
+  const timestamp = elapsedTimestamp(sourceTimestamp, deviceId);
   const magnitude = Math.sqrt((real ** 2) + (imag ** 2));
   const phase = Math.atan2(imag, real) * (180 / Math.PI);
   const magnitudeDb = 20 * Math.log10(magnitude);
 
   return {
     timestamp,
-    timeSec: timestamp > 1000000000 ? timestamp : timestamp / 1000,
+    sourceTimestamp,
+    timeSec: timestamp / 1000,
     deviceId,
     frequency,
     real,
@@ -166,21 +177,31 @@ function normalizeHumidityPacket(data, fallbackDeviceId = 'ESP32') {
   const humidity = numberFrom(data, ['humidity', 'humidity %', 'relativeHumidity', 'relative humidity %', 'rh']);
   if (humidity === null) return null;
 
-  const timestamp = numberFrom(data, ['timestamp', 'time', 't']) ?? Date.now();
+  const sourceTimestamp = numberFrom(data, ['sourceTimestamp', 'timestamp', 'time', 't']) ?? Date.now();
+  const deviceId = stringFrom(data, ['deviceId', 'deviceID', 'id'], fallbackDeviceId);
+  const timestamp = elapsedTimestamp(sourceTimestamp, deviceId);
 
   return {
     timestamp,
-    timeSec: timestamp > 1000000000 ? timestamp / 1000 : timestamp / 1000,
-    deviceId: stringFrom(data, ['deviceId', 'deviceID', 'id'], fallbackDeviceId),
+    sourceTimestamp,
+    timeSec: timestamp / 1000,
+    deviceId,
     humidity
   };
 }
 
 function formatTime(timestamp) {
-  if (timestamp > 1000000000) {
-    return new Date(timestamp).toLocaleTimeString();
-  }
   return `${(timestamp / 1000).toFixed(2)} s`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  })[character]);
 }
 
 function trimRows(rows, maxRows = 200) {
@@ -216,6 +237,7 @@ function addPacket(data, fallbackDeviceId, options = {}) {
 
   const record = {
     timestamp: impedance?.timestamp ?? humidity.timestamp,
+    sourceTimestamp: impedance?.sourceTimestamp ?? humidity.sourceTimestamp,
     deviceId: impedance?.deviceId ?? humidity.deviceId,
     frequency: impedance?.frequency ?? null,
     realImpedance: impedance?.real ?? null,
@@ -305,7 +327,7 @@ function renderImpedanceTables() {
   const rows = impedanceRows.slice(-80).map(row => `
     <tr>
       <td>${formatTime(row.timestamp)}</td>
-      <td>${row.deviceId}</td>
+      <td>${escapeHtml(row.deviceId)}</td>
       <td>${row.frequency.toFixed(2)}</td>
       <td>${row.real.toFixed(3)}</td>
       <td>${row.imag.toFixed(3)}</td>
@@ -319,7 +341,7 @@ function renderImpedanceTables() {
   els.nyquistTableBody.innerHTML = impedanceRows.slice(-80).map(row => `
     <tr>
       <td>${formatTime(row.timestamp)}</td>
-      <td>${row.deviceId}</td>
+      <td>${escapeHtml(row.deviceId)}</td>
       <td>${row.frequency.toFixed(2)}</td>
       <td>${row.real.toFixed(3)}</td>
       <td>${(-row.imag).toFixed(3)}</td>
@@ -333,7 +355,7 @@ function renderHumidityTable() {
   els.humidityTableBody.innerHTML = humidityRows.slice(-80).map(row => `
     <tr>
       <td>${formatTime(row.timestamp)}</td>
-      <td>${row.deviceId}</td>
+      <td>${escapeHtml(row.deviceId)}</td>
       <td>${row.humidity.toFixed(2)}</td>
     </tr>
   `).join('');
@@ -480,6 +502,7 @@ async function clearAllData() {
   impedanceRows.length = 0;
   humidityRows.length = 0;
   csvRecords.length = 0;
+  initialTimestampByDevice.clear();
   Object.values(nodes).forEach(node => {
     node.lastCollectedKey = null;
   });
@@ -512,6 +535,21 @@ function renderPairButtons() {
   els.pairButtons.replaceChildren();
 
   Object.values(nodes).forEach(node => {
+    const control = document.createElement('div');
+    control.className = 'device-pair-control';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'device-name-input';
+    nameInput.value = node.deviceId;
+    nameInput.maxLength = 40;
+    nameInput.placeholder = `Device ${node.slot}`;
+    nameInput.setAttribute('aria-label', `${node.label} name`);
+    nameInput.disabled = Boolean(node.port);
+    nameInput.addEventListener('input', event => {
+      node.deviceId = event.target.value;
+    });
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'pair-button';
@@ -522,7 +560,9 @@ function renderPairButtons() {
     button.addEventListener('click', () => {
       pairNode(node.slot).catch(error => setStatus(error.message));
     });
-    els.pairButtons.appendChild(button);
+
+    control.append(nameInput, button);
+    els.pairButtons.appendChild(control);
   });
 }
 
@@ -550,14 +590,29 @@ async function pairNode(slot) {
     throw new Error('Web Serial is not available in this browser.');
   }
 
+  const node = nodes[slot];
+  const deviceName = node.deviceId.trim();
+  if (!deviceName) {
+    throw new Error(`Enter a name for ${node.label} before pairing.`);
+  }
+
+  const duplicateName = Object.values(nodes).some(candidate => (
+    candidate.slot !== slot
+    && candidate.deviceId.trim().toLowerCase() === deviceName.toLowerCase()
+  ));
+  if (duplicateName) {
+    throw new Error(`The device name "${deviceName}" is already in use.`);
+  }
+
+  node.deviceId = deviceName;
   const port = await navigator.serial.requestPort();
   await port.open({ baudRate: SERIAL_BAUD_RATE });
 
-  nodes[slot].port = port;
+  node.port = port;
   startSerialReader(slot);
 
   renderPairButtons();
-  setStatus(`${nodes[slot].label} serial port opened at ${SERIAL_BAUD_RATE} baud`);
+  setStatus(`${node.deviceId} serial port opened at ${SERIAL_BAUD_RATE} baud`);
 }
 
 async function startSerialReader(slot) {
